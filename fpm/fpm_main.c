@@ -2090,8 +2090,6 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
-				SYSLOG("");
-
 	fastcgi_request_done2:
 				if (UNEXPECTED(request_body_fd != -1)) {
 					close(request_body_fd);
