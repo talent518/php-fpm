@@ -149,6 +149,8 @@ static void fpm_child_init(struct fpm_worker_pool_s *wp) /* {{{ */
 {
 	fpm_globals.max_requests = wp->config->pm_max_requests;
 	fpm_globals.listening_socket = dup(wp->listening_socket);
+	fpm_globals.php_entry_file = wp->config->php_entry_file;
+	fpm_globals.php_entry_func = wp->config->php_entry_func;
 
 	if (0 > fpm_stdio_init_child(wp)  ||
 	    0 > fpm_log_init_child(wp)    ||

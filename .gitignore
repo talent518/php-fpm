@@ -1,0 +1,10 @@
+*.lo
+fpm/.libs
+init.d.php-fpm
+php-fpm.8
+php-fpm.conf
+php-fpm.service
+status.html
+www.conf
+php-fpm
+fpm/events/.libs/

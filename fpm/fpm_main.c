@@ -29,6 +29,7 @@
 #include "zend_ini_scanner.h"
 #include "zend_globals.h"
 #include "zend_stream.h"
+#include "php_ticks.h"
 
 #include "SAPI.h"
 
@@ -58,6 +59,8 @@
 #if HAVE_FCNTL_H
 # include <fcntl.h>
 #endif
+
+#include <syslog.h>
 
 #include "zend.h"
 #include "zend_extensions.h"
@@ -249,6 +252,8 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 	/* sapi has started which means everyhting must be send through fcgi */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
+		if(!request) return 0;
+
 		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
 		if (ret <= 0) {
 			return 0;
@@ -440,6 +445,8 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 	}
 	while (read_bytes < count_bytes) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
+		if(!request) return 0;
+
 		if (request_body_fd == -1) {
 			char *request_body_filename = FCGI_GETENV(request, "REQUEST_BODY_FILE");
 
@@ -474,7 +481,7 @@ static char *sapi_cgibin_getenv(char *name, size_t name_len) /* {{{ */
 	/* if fpm has started, use fcgi env */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
-		return fcgi_getenv(request, name, name_len);
+		if(request) return fcgi_getenv(request, name, name_len);
 	}
 
 	/* if fpm has not started yet, use std env */
@@ -502,7 +509,7 @@ static char *sapi_cgi_read_cookies(void) /* {{{ */
 {
 	fcgi_request *request = (fcgi_request*) SG(server_context);
 
-	return FCGI_GETENV(request, "HTTP_COOKIE");
+	return request ? FCGI_GETENV(request, "HTTP_COOKIE") : NULL;
 }
 /* }}} */
 
@@ -542,7 +549,10 @@ void cgi_php_import_environment_variables(zval *array_ptr) /* {{{ */
 	php_php_import_environment_variables(array_ptr);
 
 	request = (fcgi_request*) SG(server_context);
-	fcgi_loadenv(request, cgi_php_load_env_var, array_ptr);
+
+	if(request) {
+		fcgi_loadenv(request, cgi_php_load_env_var, array_ptr);
+	}
 }
 /* }}} */
 
@@ -695,6 +705,8 @@ static int sapi_cgi_activate(void) /* {{{ */
 	char *path, *doc_root, *server_name;
 	uint32_t path_len, doc_root_len, server_name_len;
 
+	if(!request) return SUCCESS;
+
 	/* PATH_TRANSLATED should be defined at this stage but better safe than sorry :) */
 	if (!SG(request_info).path_translated) {
 		return FAILURE;
@@ -761,7 +773,7 @@ static int sapi_cgi_deactivate(void) /* {{{ */
 		1. SAPI Deactivate is called from two places: module init and request shutdown
 		2. When the first call occurs and the request is not set up, flush fails on FastCGI.
 	*/
-	if (SG(sapi_started)) {
+	if (SG(sapi_started) && SG(server_context)) {
 		if (!parent && !fcgi_finish_request((fcgi_request*)SG(server_context), 0)) {
 			php_handle_aborted_connection();
 		}
@@ -1534,6 +1546,39 @@ static zend_module_entry cgi_module_entry = {
 	STANDARD_MODULE_PROPERTIES
 };
 
+#ifdef FPM_ENTRY_DEBUG
+#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER)
+#	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define CLOSELOG() closelog()
+#else
+#	define OPENLOG()
+#	define SYSLOG(fmt, args...)
+#	define CLOSELOG()
+#endif
+
+static int php_fpm_output_handler(void **handler_context, php_output_context *output_context)
+{
+	if(!SG(headers_sent)) {
+		if (!php_header()) {
+			OG(flags) |= PHP_OUTPUT_DISABLED;
+		}
+	}
+
+	PHPWRITE_H(output_context->in.data, output_context->in.used);
+
+	SYSLOG(" => %p %ld %d", output_context->in.data, output_context->in.used, output_context->op);
+
+#ifdef FPM_ENTRY_DEBUG
+	if(output_context->in.used) {
+		char *str = estrndup(output_context->in.data, output_context->in.used);
+		SYSLOG(" => %ld: %s", output_context->in.used, str);
+		efree(str);
+	}
+#endif
+
+	return SUCCESS;
+}
+
 /* {{{ main
  */
 int main(int argc, char *argv[])
@@ -1866,61 +1911,29 @@ consult the installation file that came with this distribution, or visit \n\
 	/* library is already initialized, now init our request */
 	request = fpm_init_request(fcgi_fd);
 
-	zend_first_try {
-		while (EXPECTED(fcgi_accept_request(request) >= 0)) {
-			char *primary_script = NULL;
-			request_body_fd = -1;
-			SG(server_context) = (void *) request;
-			init_request_info();
+	if(fpm_globals.php_entry_file && fpm_globals.php_entry_func) {
+		OPENLOG();
 
-			fpm_request_info();
+		SYSLOG("");
+
+		zend_first_try {
+			SG(server_context) = NULL;
 
 			/* request startup only after we've done all we can to
 			 *            get path_translated */
 			if (UNEXPECTED(php_request_startup() == FAILURE)) {
-				fcgi_finish_request(request, 1);
-				SG(server_context) = NULL;
 				php_module_shutdown();
 				return FPM_EXIT_SOFTWARE;
 			}
 
-			/* check if request_method has been sent.
-			 * if not, it's certainly not an HTTP over fcgi request */
-			if (UNEXPECTED(!SG(request_info).request_method)) {
-				goto fastcgi_request_done;
-			}
+			SYSLOG("");
 
-			if (UNEXPECTED(fpm_status_handle_request())) {
-				goto fastcgi_request_done;
-			}
-
-			/* If path_translated is NULL, terminate here with a 404 */
-			if (UNEXPECTED(!SG(request_info).path_translated)) {
-				zend_try {
-					zlog(ZLOG_DEBUG, "Primary script unknown");
-					SG(sapi_headers).http_response_code = 404;
-					PUTS("File not found.\n");
-				} zend_catch {
-				} zend_end_try();
-				goto fastcgi_request_done;
-			}
-
-			if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
-				SG(sapi_headers).http_response_code = 403;
-				PUTS("Access denied.\n");
-				goto fastcgi_request_done;
-			}
-
-			/*
-			 * have to duplicate SG(request_info).path_translated to be able to log errrors
-			 * php_fopen_primary_script seems to delete SG(request_info).path_translated on failure
-			 */
-			primary_script = estrdup(SG(request_info).path_translated);
+			SG(request_info).path_translated = fpm_globals.php_entry_file;
 
 			/* path_translated exists, we can continue ! */
 			if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
 				zend_try {
-					zlog(ZLOG_ERROR, "Unable to open primary script: %s (%s)", primary_script, strerror(errno));
+					zlog(ZLOG_ERROR, "Unable to open primary script: %s (%s)", fpm_globals.php_entry_file, strerror(errno));
 					if (errno == EACCES) {
 						SG(sapi_headers).http_response_code = 403;
 						PUTS("Access denied.\n");
@@ -1930,67 +1943,358 @@ consult the installation file that came with this distribution, or visit \n\
 					}
 				} zend_catch {
 				} zend_end_try();
-				/* we want to serve more requests if this is fastcgi
-				 * so cleanup and continue, request shutdown is
-				 * handled later */
 
-				goto fastcgi_request_done;
+				php_request_shutdown((void *) 0);
+				php_module_shutdown();
+				return FPM_EXIT_SOFTWARE;
 			}
 
-			fpm_request_executing();
+			SYSLOG("");
 
 			php_execute_script(&file_handle);
 
-fastcgi_request_done:
-			if (EXPECTED(primary_script)) {
-				efree(primary_script);
-			}
+			SYSLOG("");
 
-			if (UNEXPECTED(request_body_fd != -1)) {
-				close(request_body_fd);
-			}
-			request_body_fd = -2;
+			php_output_clean_all();
+			// php_output_discard_all();
 
-			if (UNEXPECTED(EG(exit_status) == 255)) {
-				if (CGIG(error_header) && *CGIG(error_header)) {
-					sapi_header_line ctr = {0};
+			SYSLOG("");
 
-					ctr.line = CGIG(error_header);
-					ctr.line_len = strlen(CGIG(error_header));
-					sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+			zend_try {
+				int i;
+
+				for (i=0; i<NUM_TRACK_VARS; i++) {
+					zval_ptr_dtor(&PG(http_globals)[i]);
 				}
+			} zend_end_try();
+
+			zend_try {
+				sapi_deactivate();
+			} zend_end_try();
+
+			SYSLOG("");
+
+			SYSLOG("");
+
+			while (EXPECTED(fcgi_accept_request(request) >= 0)) {
+				request_body_fd = -1;
+				SG(server_context) = (void *) request;
+				init_request_info();
+
+				SYSLOG("REQ BEGIN");
+
+				fpm_request_info();
+
+				SYSLOG("");
+
+				SYSLOG("");
+
+				zend_try {
+					PG(modules_activated) = 0;
+					php_output_activate();
+					sapi_activate();
+					php_hash_environment();
+					//php_startup_ticks();
+					zend_is_auto_global_str(ZEND_STRL("_SERVER"));
+					zend_is_auto_global_str(ZEND_STRL("_REQUEST"));
+					PG(modules_activated) = 1;
+					SG(sapi_started) = 1;
+				} zend_end_try();
+
+				SYSLOG("");
+
+				SG(headers_sent) = 0;
+				SG(request_info).no_headers = 0;
+
+				if (PG(expose_php)) {
+					sapi_add_header(SAPI_PHP_VERSION_HEADER, sizeof(SAPI_PHP_VERSION_HEADER)-1, 1);
+				}
+
+				php_output_handler_start(php_output_handler_create_internal(ZEND_STRL("fpm"), php_fpm_output_handler, PHP_OUTPUT_HANDLER_DEFAULT_SIZE, PHP_OUTPUT_HANDLER_STDFLAGS));
+				php_output_set_implicit_flush(0);
+
+				SYSLOG("");
+
+				/* check if request_method has been sent.
+				 * if not, it's certainly not an HTTP over fcgi request */
+				if (UNEXPECTED(!SG(request_info).request_method)) {
+					goto fastcgi_request_done2;
+				}
+
+				SYSLOG("");
+
+				if (UNEXPECTED(fpm_status_handle_request())) {
+					SYSLOG(" STATUS");
+					goto fastcgi_request_done2;
+				}
+
+				SYSLOG("");
+
+				/* If path_translated is NULL, terminate here with a 404 */
+				if (UNEXPECTED(!SG(request_info).path_translated)) {
+					zend_try {
+						zlog(ZLOG_DEBUG, "Primary script unknown");
+						SG(sapi_headers).http_response_code = 404;
+						PUTS("File not found.\n");
+					} zend_catch {
+					} zend_end_try();
+					goto fastcgi_request_done2;
+				}
+
+				SYSLOG("");
+
+				if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
+					SG(sapi_headers).http_response_code = 403;
+					PUTS("Access denied.\n");
+					goto fastcgi_request_done2;
+				}
+
+				SYSLOG("");
+
+				fpm_request_executing();
+
+				SYSLOG("");
+
+				{
+					zval fname, retval;
+					int res;
+
+					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
+
+					zend_try {
+						res = call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0);
+					} zend_end_try();
+
+					if(res != SUCCESS) PUTS("CALL function FAILURE\n");
+
+					zval_ptr_dtor_str(&fname);
+					zval_ptr_dtor(&retval);
+				}
+
+				SYSLOG("");
+
+				if (UNEXPECTED(EG(exit_status) == 255)) {
+					if (CGIG(error_header) && *CGIG(error_header)) {
+						sapi_header_line ctr = {0};
+
+						ctr.line = CGIG(error_header);
+						ctr.line_len = strlen(CGIG(error_header));
+						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+					}
+				}
+
+				SYSLOG("");
+
+				php_output_flush_all();
+				php_output_discard_all();
+
+				SYSLOG("");
+
+				SYSLOG("");
+
+	fastcgi_request_done2:
+				if (UNEXPECTED(request_body_fd != -1)) {
+					close(request_body_fd);
+				}
+				request_body_fd = -2;
+
+				SYSLOG("");
+
+				fpm_request_end();
+				fpm_log_write(NULL);
+
+				SYSLOG("");
+
+				zend_try {
+					//php_deactivate_ticks();
+					if (PG(modules_activated)) php_call_shutdown_functions();
+					{
+						zend_bool send_buffer = SG(request_info).headers_only ? 0 : 1;
+
+						if (CG(unclean_shutdown) && PG(last_error_type) == E_ERROR &&
+							(size_t)PG(memory_limit) < zend_memory_usage(1)
+						) {
+							send_buffer = 0;
+						}
+
+						if (!send_buffer) {
+							php_output_discard_all();
+						} else {
+							php_output_end_all();
+						}
+					};
+					php_output_deactivate();
+
+					{
+						int i;
+
+						for (i=0; i<NUM_TRACK_VARS; i++) {
+							zval_ptr_dtor(&PG(http_globals)[i]);
+						}
+					}
+
+					sapi_deactivate();
+				} zend_end_try();
+
+				SYSLOG("");
+
+				fpm_stdio_flush_child();
+
+				SYSLOG(" REQ END");
+
+				requests++;
+				if (UNEXPECTED(max_requests && (requests == max_requests))) {
+					fcgi_request_set_keep(request, 0);
+					fcgi_finish_request(request, 0);
+					break;
+				}
+				/* end of fastcgi loop */
 			}
 
-			fpm_request_end();
-			fpm_log_write(NULL);
+			fcgi_destroy_request(request);
+			fcgi_shutdown();
 
-			efree(SG(request_info).path_translated);
-			SG(request_info).path_translated = NULL;
-
+			sapi_activate();
 			php_request_shutdown((void *) 0);
 
-			fpm_stdio_flush_child();
-
-			requests++;
-			if (UNEXPECTED(max_requests && (requests == max_requests))) {
-				fcgi_request_set_keep(request, 0);
-				fcgi_finish_request(request, 0);
-				break;
+			if (cgi_sapi_module.php_ini_path_override) {
+				free(cgi_sapi_module.php_ini_path_override);
 			}
-			/* end of fastcgi loop */
-		}
-		fcgi_destroy_request(request);
-		fcgi_shutdown();
+			if (cgi_sapi_module.ini_entries) {
+				free(cgi_sapi_module.ini_entries);
+			}
+		} zend_catch {
+			exit_status = FPM_EXIT_SOFTWARE;
+		} zend_end_try();
 
-		if (cgi_sapi_module.php_ini_path_override) {
-			free(cgi_sapi_module.php_ini_path_override);
-		}
-		if (cgi_sapi_module.ini_entries) {
-			free(cgi_sapi_module.ini_entries);
-		}
-	} zend_catch {
-		exit_status = FPM_EXIT_SOFTWARE;
-	} zend_end_try();
+		CLOSELOG();
+	} else {
+		zend_first_try {
+			while (EXPECTED(fcgi_accept_request(request) >= 0)) {
+				char *primary_script = NULL;
+				request_body_fd = -1;
+				SG(server_context) = (void *) request;
+				init_request_info();
+
+				fpm_request_info();
+
+				/* request startup only after we've done all we can to
+				 *            get path_translated */
+				if (UNEXPECTED(php_request_startup() == FAILURE)) {
+					fcgi_finish_request(request, 1);
+					SG(server_context) = NULL;
+					php_module_shutdown();
+					return FPM_EXIT_SOFTWARE;
+				}
+
+				/* check if request_method has been sent.
+				 * if not, it's certainly not an HTTP over fcgi request */
+				if (UNEXPECTED(!SG(request_info).request_method)) {
+					goto fastcgi_request_done;
+				}
+
+				if (UNEXPECTED(fpm_status_handle_request())) {
+					goto fastcgi_request_done;
+				}
+
+				/* If path_translated is NULL, terminate here with a 404 */
+				if (UNEXPECTED(!SG(request_info).path_translated)) {
+					zend_try {
+						zlog(ZLOG_DEBUG, "Primary script unknown");
+						SG(sapi_headers).http_response_code = 404;
+						PUTS("File not found.\n");
+					} zend_catch {
+					} zend_end_try();
+					goto fastcgi_request_done;
+				}
+
+				if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
+					SG(sapi_headers).http_response_code = 403;
+					PUTS("Access denied.\n");
+					goto fastcgi_request_done;
+				}
+
+				/*
+				 * have to duplicate SG(request_info).path_translated to be able to log errrors
+				 * php_fopen_primary_script seems to delete SG(request_info).path_translated on failure
+				 */
+				primary_script = estrdup(SG(request_info).path_translated);
+
+				/* path_translated exists, we can continue ! */
+				if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
+					zend_try {
+						zlog(ZLOG_ERROR, "Unable to open primary script: %s (%s)", primary_script, strerror(errno));
+						if (errno == EACCES) {
+							SG(sapi_headers).http_response_code = 403;
+							PUTS("Access denied.\n");
+						} else {
+							SG(sapi_headers).http_response_code = 404;
+							PUTS("No input file specified.\n");
+						}
+					} zend_catch {
+					} zend_end_try();
+					/* we want to serve more requests if this is fastcgi
+					 * so cleanup and continue, request shutdown is
+					 * handled later */
+
+					goto fastcgi_request_done;
+				}
+
+				fpm_request_executing();
+
+				php_execute_script(&file_handle);
+
+	fastcgi_request_done:
+				if (EXPECTED(primary_script)) {
+					efree(primary_script);
+				}
+
+				if (UNEXPECTED(request_body_fd != -1)) {
+					close(request_body_fd);
+				}
+				request_body_fd = -2;
+
+				if (UNEXPECTED(EG(exit_status) == 255)) {
+					if (CGIG(error_header) && *CGIG(error_header)) {
+						sapi_header_line ctr = {0};
+
+						ctr.line = CGIG(error_header);
+						ctr.line_len = strlen(CGIG(error_header));
+						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+					}
+				}
+
+				fpm_request_end();
+				fpm_log_write(NULL);
+
+				efree(SG(request_info).path_translated);
+				SG(request_info).path_translated = NULL;
+
+				php_request_shutdown((void *) 0);
+
+				fpm_stdio_flush_child();
+
+				requests++;
+				if (UNEXPECTED(max_requests && (requests == max_requests))) {
+					fcgi_request_set_keep(request, 0);
+					fcgi_finish_request(request, 0);
+					break;
+				}
+				/* end of fastcgi loop */
+			}
+			fcgi_destroy_request(request);
+			fcgi_shutdown();
+
+			if (cgi_sapi_module.php_ini_path_override) {
+				free(cgi_sapi_module.php_ini_path_override);
+			}
+			if (cgi_sapi_module.ini_entries) {
+				free(cgi_sapi_module.ini_entries);
+			}
+		} zend_catch {
+			exit_status = FPM_EXIT_SOFTWARE;
+		} zend_end_try();
+	}
 
 out:
 

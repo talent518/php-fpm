@@ -4,6 +4,15 @@ PHP_ARG_ENABLE([fpm],,
   [no],
   [no])
 
+PHP_ARG_ENABLE([fpm-entry-debug],,
+  [AS_HELP_STRING([--enable-fpm-entry-debug],
+    [Enable fpm entry debug info for syslog])],
+  [no])
+
+if test "$PHP_FPM_ENTRY_DEBUG" != "no"; then
+  CFLAGS="$CFLAGS -DFPM_ENTRY_DEBUG"
+fi
+
 dnl Configure checks.
 AC_DEFUN([AC_FPM_STDLIBS],
 [

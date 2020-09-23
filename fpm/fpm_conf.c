@@ -159,6 +159,8 @@ static struct ini_value_parser_s ini_fpm_pool_options[] = {
 #ifdef HAVE_APPARMOR
 	{ "apparmor_hat",              &fpm_conf_set_string,      WPO(apparmor_hat) },
 #endif
+	{ "php_entry_file",            &fpm_conf_set_string,      WPO(php_entry_file) },
+	{ "php_entry_func",            &fpm_conf_set_string,      WPO(php_entry_func) },
 	{ 0, 0, 0 }
 };
 
