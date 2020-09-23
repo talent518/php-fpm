@@ -30,6 +30,7 @@
 #include "zend_globals.h"
 #include "zend_stream.h"
 #include "php_ticks.h"
+#include "zend_exceptions.h"
 
 #include "SAPI.h"
 
@@ -1549,19 +1550,19 @@ static zend_module_entry cgi_module_entry = {
 #ifdef FPM_ENTRY_DEBUG
 #	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER)
 #	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGE SYSLOG
 #	define CLOSELOG() closelog()
 #else
-#	define OPENLOG()
+#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER)
 #	define SYSLOG(fmt, args...)
-#	define CLOSELOG()
+#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define CLOSELOG() closelog()
 #endif
 
 static int php_fpm_output_handler(void **handler_context, php_output_context *output_context)
 {
 	if(!SG(headers_sent)) {
-		if (!php_header()) {
-			OG(flags) |= PHP_OUTPUT_DISABLED;
-		}
+		php_header();
 	}
 
 	PHPWRITE_H(output_context->in.data, output_context->in.used);
@@ -1956,7 +1957,6 @@ consult the installation file that came with this distribution, or visit \n\
 			SYSLOG("");
 
 			php_output_clean_all();
-			// php_output_discard_all();
 
 			SYSLOG("");
 
@@ -1993,12 +1993,20 @@ consult the installation file that came with this distribution, or visit \n\
 					PG(modules_activated) = 0;
 					php_output_activate();
 					sapi_activate();
+					if (PG(max_input_time) == -1) {
+						zend_set_timeout(EG(timeout_seconds), 1);
+					} else {
+						zend_set_timeout(PG(max_input_time), 1);
+					}
 					php_hash_environment();
 					//php_startup_ticks();
 					zend_is_auto_global_str(ZEND_STRL("_SERVER"));
 					zend_is_auto_global_str(ZEND_STRL("_REQUEST"));
 					PG(modules_activated) = 1;
 					SG(sapi_started) = 1;
+				} zend_catch {
+					SYSLOGE(" ERROR");
+					zend_bailout();
 				} zend_end_try();
 
 				SYSLOG("");
@@ -2018,6 +2026,7 @@ consult the installation file that came with this distribution, or visit \n\
 				/* check if request_method has been sent.
 				 * if not, it's certainly not an HTTP over fcgi request */
 				if (UNEXPECTED(!SG(request_info).request_method)) {
+					SYSLOGE(" ERROR");
 					goto fastcgi_request_done2;
 				}
 
@@ -2036,8 +2045,8 @@ consult the installation file that came with this distribution, or visit \n\
 						zlog(ZLOG_DEBUG, "Primary script unknown");
 						SG(sapi_headers).http_response_code = 404;
 						PUTS("File not found.\n");
-					} zend_catch {
 					} zend_end_try();
+					SYSLOGE(" ERROR");
 					goto fastcgi_request_done2;
 				}
 
@@ -2046,6 +2055,7 @@ consult the installation file that came with this distribution, or visit \n\
 				if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
 					SG(sapi_headers).http_response_code = 403;
 					PUTS("Access denied.\n");
+					SYSLOGE(" ERROR");
 					goto fastcgi_request_done2;
 				}
 
@@ -2057,18 +2067,30 @@ consult the installation file that came with this distribution, or visit \n\
 
 				{
 					zval fname, retval;
-					int res;
+					int res = FAILURE;
 
 					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
 
 					zend_try {
 						res = call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0);
+					} zend_catch {
+						SYSLOGE(" ERROR");
+
+						if (EG(exception)) {
+							zend_exception_error(EG(exception), E_ERROR);
+							EG(exception) = NULL;
+						} else {
+							zend_bailout();
+						}
 					} zend_end_try();
 
-					if(res != SUCCESS) PUTS("CALL function FAILURE\n");
+					if(res == SUCCESS) {
+						zval_ptr_dtor(&retval);
+					} else {
+						PUTS("CALL function FAILURE\n");
+					}
 
 					zval_ptr_dtor_str(&fname);
-					zval_ptr_dtor(&retval);
 				}
 
 				SYSLOG("");
@@ -2109,9 +2131,7 @@ consult the installation file that came with this distribution, or visit \n\
 					{
 						zend_bool send_buffer = SG(request_info).headers_only ? 0 : 1;
 
-						if (CG(unclean_shutdown) && PG(last_error_type) == E_ERROR &&
-							(size_t)PG(memory_limit) < zend_memory_usage(1)
-						) {
+						if (CG(unclean_shutdown) && PG(last_error_type) == E_ERROR && (size_t)PG(memory_limit) < zend_memory_usage(1)) {
 							send_buffer = 0;
 						}
 
@@ -2120,7 +2140,8 @@ consult the installation file that came with this distribution, or visit \n\
 						} else {
 							php_output_end_all();
 						}
-					};
+					}
+					zend_unset_timeout();
 					php_output_deactivate();
 
 					{
@@ -2132,6 +2153,9 @@ consult the installation file that came with this distribution, or visit \n\
 					}
 
 					sapi_deactivate();
+				} zend_catch {
+					SYSLOGE(" ERROR");
+					zend_bailout();
 				} zend_end_try();
 
 				SYSLOG("");
@@ -2163,6 +2187,8 @@ consult the installation file that came with this distribution, or visit \n\
 			}
 		} zend_catch {
 			exit_status = FPM_EXIT_SOFTWARE;
+			SYSLOGE(" ERROR");
+			zend_bailout();
 		} zend_end_try();
 
 		CLOSELOG();
