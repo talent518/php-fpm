@@ -2053,18 +2053,11 @@ consult the installation file that came with this distribution, or visit \n\
 
 				zend_try {
 					zval fname, retval;
-					int res = FAILURE;
 
 					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
 
-					res = call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0);
-
-					if(res == SUCCESS) {
+					if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
 						zval_ptr_dtor(&retval);
-					} else if (EG(exception)) {
-						zend_try {
-							zend_exception_error(EG(exception), E_ERROR);
-						} zend_end_try();
 					}
 
 					zval_ptr_dtor_str(&fname);
@@ -2079,6 +2072,18 @@ consult the installation file that came with this distribution, or visit \n\
 					close(request_body_fd);
 				}
 				request_body_fd = -2;
+
+				SYSLOG("");
+
+				if (UNEXPECTED(EG(exit_status) == 255)) {
+					if (CGIG(error_header) && *CGIG(error_header)) {
+						sapi_header_line ctr = {0};
+
+						ctr.line = CGIG(error_header);
+						ctr.line_len = strlen(CGIG(error_header));
+						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+					}
+				}
 
 				SYSLOG("");
 
