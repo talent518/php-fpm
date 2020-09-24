@@ -29,8 +29,10 @@
 #include "zend_ini_scanner.h"
 #include "zend_globals.h"
 #include "zend_stream.h"
+#include "zend_types.h"
 #include "php_ticks.h"
 #include "zend_exceptions.h"
+#include "rfc1867.h"
 
 #include "SAPI.h"
 
@@ -246,9 +248,33 @@ static void print_extensions(void) /* {{{ */
 #define STDOUT_FILENO 1
 #endif
 
+#ifdef FPM_ENTRY_DEBUG
+#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOG(" OPEN")
+#	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGE SYSLOG
+#	define SYSLOGG(fmt, args...) if(fpm_globals.php_entry_file && fpm_globals.php_entry_func){SYSLOG(fmt, ##args);}
+#	define CLOSELOG() SYSLOG(" CLOSE");closelog()
+#else
+#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
+#	define SYSLOG(fmt, args...)
+#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGG(...)
+#	define CLOSELOG() SYSLOGE(" CLOSE");closelog()
+#endif
+
 static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_length) /* {{{ */
 {
 	ssize_t ret;
+
+	SYSLOGG(" => %p %u", str, str_length);
+
+	#ifdef FPM_ENTRY_DEBUG
+		if(str) {
+			char *str2 = estrndup(str, str_length);
+			SYSLOG(" => %u: %s", str_length, str2);
+			efree(str2);
+		}
+	#endif
 
 	/* sapi has started which means everyhting must be send through fcgi */
 	if (fpm_is_running) {
@@ -257,10 +283,14 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 
 		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
 		if (ret <= 0) {
+			SYSLOGG(" ERROR");
 			return 0;
 		}
+		SYSLOGG("");
 		return (size_t)ret;
 	}
+
+	SYSLOGG("");
 
 	/* sapi has not started, output to stdout instead of fcgi */
 #ifdef PHP_WRITE_STDOUT
@@ -281,9 +311,21 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 	uint32_t remaining = str_length;
 	size_t ret;
 
+
+	SYSLOGG(" => %p %ld", str, str_length);
+
+	#ifdef FPM_ENTRY_DEBUG
+		if(str) {
+			char *str2 = estrndup(str, str_length);
+			SYSLOG(" => %ld: %s", str_length, str2);
+			efree(str2);
+		}
+	#endif
+
 	while (remaining > 0) {
 		ret = sapi_cgibin_single_write(ptr, remaining);
 		if (!ret) {
+			SYSLOGG("");
 			php_handle_aborted_connection();
 			return str_length - remaining;
 		}
@@ -291,18 +333,23 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 		remaining -= ret;
 	}
 
+	SYSLOGG("");
+
 	return str_length;
 }
 /* }}} */
 
 static void sapi_cgibin_flush(void *server_context) /* {{{ */
 {
+	SYSLOGG(" FLUSH");
+
 	/* fpm has started, let use fcgi instead of stdout */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) server_context;
 		if (!parent && request && !fcgi_flush(request, 0)) {
 			php_handle_aborted_connection();
 		}
+		SYSLOGG("");
 		return;
 	}
 
@@ -310,6 +357,7 @@ static void sapi_cgibin_flush(void *server_context) /* {{{ */
 	if (fflush(stdout) == EOF) {
 		php_handle_aborted_connection();
 	}
+	SYSLOGG("");
 }
 /* }}} */
 
@@ -1547,39 +1595,6 @@ static zend_module_entry cgi_module_entry = {
 	STANDARD_MODULE_PROPERTIES
 };
 
-#ifdef FPM_ENTRY_DEBUG
-#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER)
-#	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
-#	define SYSLOGE SYSLOG
-#	define CLOSELOG() closelog()
-#else
-#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER)
-#	define SYSLOG(fmt, args...)
-#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
-#	define CLOSELOG() closelog()
-#endif
-
-static int php_fpm_output_handler(void **handler_context, php_output_context *output_context)
-{
-	if(!SG(headers_sent)) {
-		php_header();
-	}
-
-	PHPWRITE_H(output_context->in.data, output_context->in.used);
-
-	SYSLOG(" => %p %ld %d", output_context->in.data, output_context->in.used, output_context->op);
-
-#ifdef FPM_ENTRY_DEBUG
-	if(output_context->in.used) {
-		char *str = estrndup(output_context->in.data, output_context->in.used);
-		SYSLOG(" => %ld: %s", output_context->in.used, str);
-		efree(str);
-	}
-#endif
-
-	return SUCCESS;
-}
-
 /* {{{ main
  */
 int main(int argc, char *argv[])
@@ -1956,10 +1971,6 @@ consult the installation file that came with this distribution, or visit \n\
 
 			SYSLOG("");
 
-			php_output_clean_all();
-
-			SYSLOG("");
-
 			zend_try {
 				int i;
 
@@ -1967,12 +1978,6 @@ consult the installation file that came with this distribution, or visit \n\
 					zval_ptr_dtor(&PG(http_globals)[i]);
 				}
 			} zend_end_try();
-
-			zend_try {
-				sapi_deactivate();
-			} zend_end_try();
-
-			SYSLOG("");
 
 			SYSLOG("");
 
@@ -1987,23 +1992,41 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
-				SYSLOG("");
-
 				zend_try {
 					PG(modules_activated) = 0;
-					php_output_activate();
-					sapi_activate();
 					if (PG(max_input_time) == -1) {
 						zend_set_timeout(EG(timeout_seconds), 1);
 					} else {
 						zend_set_timeout(PG(max_input_time), 1);
 					}
 					php_hash_environment();
-					//php_startup_ticks();
 					zend_is_auto_global_str(ZEND_STRL("_SERVER"));
 					zend_is_auto_global_str(ZEND_STRL("_REQUEST"));
 					PG(modules_activated) = 1;
 					SG(sapi_started) = 1;
+
+					zend_llist_init(&SG(sapi_headers).headers, sizeof(sapi_header_struct), (void (*)(void *)) sapi_free_header, 0);
+					SG(sapi_headers).send_default_content_type = 1;
+					SG(sapi_headers).http_status_line = NULL;
+					SG(sapi_headers).mimetype = NULL;
+					SG(headers_sent) = 0;
+					ZVAL_UNDEF(&SG(callback_func));
+					SG(read_post_bytes) = 0;
+					SG(request_info).request_body = NULL;
+					SG(request_info).current_user = NULL;
+					SG(request_info).current_user_length = 0;
+					SG(request_info).no_headers = 0;
+					SG(request_info).post_entry = NULL;
+					SG(request_info).proto_num = 1000; /* Default to HTTP 1.0 */
+					SG(global_request_time) = 0;
+					SG(post_read) = 0;
+					/* It's possible to override this general case in the activate() callback, if necessary. */
+					if (SG(request_info).request_method && !strcmp(SG(request_info).request_method, "HEAD")) {
+						SG(request_info).headers_only = 1;
+					} else {
+						SG(request_info).headers_only = 0;
+					}
+					SG(rfc1867_uploaded_files) = NULL;
 				} zend_catch {
 					SYSLOGE(" ERROR");
 					zend_bailout();
@@ -2011,23 +2034,8 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
-				SG(headers_sent) = 0;
-				SG(request_info).no_headers = 0;
-
 				if (PG(expose_php)) {
 					sapi_add_header(SAPI_PHP_VERSION_HEADER, sizeof(SAPI_PHP_VERSION_HEADER)-1, 1);
-				}
-
-				php_output_handler_start(php_output_handler_create_internal(ZEND_STRL("fpm"), php_fpm_output_handler, PHP_OUTPUT_HANDLER_DEFAULT_SIZE, PHP_OUTPUT_HANDLER_STDFLAGS));
-				php_output_set_implicit_flush(0);
-
-				SYSLOG("");
-
-				/* check if request_method has been sent.
-				 * if not, it's certainly not an HTTP over fcgi request */
-				if (UNEXPECTED(!SG(request_info).request_method)) {
-					SYSLOGE(" ERROR");
-					goto fastcgi_request_done2;
 				}
 
 				SYSLOG("");
@@ -2039,70 +2047,30 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
-				/* If path_translated is NULL, terminate here with a 404 */
-				if (UNEXPECTED(!SG(request_info).path_translated)) {
-					zend_try {
-						zlog(ZLOG_DEBUG, "Primary script unknown");
-						SG(sapi_headers).http_response_code = 404;
-						PUTS("File not found.\n");
-					} zend_end_try();
-					SYSLOGE(" ERROR");
-					goto fastcgi_request_done2;
-				}
-
-				SYSLOG("");
-
-				if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
-					SG(sapi_headers).http_response_code = 403;
-					PUTS("Access denied.\n");
-					SYSLOGE(" ERROR");
-					goto fastcgi_request_done2;
-				}
-
-				SYSLOG("");
-
 				fpm_request_executing();
 
 				SYSLOG("");
 
-				{
+				zend_try {
 					zval fname, retval;
 					int res = FAILURE;
 
 					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
 
-					zend_try {
-						res = call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0);
-					} zend_catch {
-						SYSLOGE(" ERROR");
-						zend_bailout();
-					} zend_end_try();
+					res = call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0);
 
 					if(res == SUCCESS) {
 						zval_ptr_dtor(&retval);
-					} else {
-						PUTS("CALL function FAILURE\n");
+					} else if (EG(exception)) {
+						zend_try {
+							zend_exception_error(EG(exception), E_ERROR);
+						} zend_end_try();
 					}
 
 					zval_ptr_dtor_str(&fname);
-				}
-
-				SYSLOG("");
-
-				if (UNEXPECTED(EG(exit_status) == 255)) {
-					if (CGIG(error_header) && *CGIG(error_header)) {
-						sapi_header_line ctr = {0};
-
-						ctr.line = CGIG(error_header);
-						ctr.line_len = strlen(CGIG(error_header));
-						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
-					}
-				}
-
-				SYSLOG("");
-
-				php_output_flush_all();
-				php_output_discard_all();
+				} zend_catch {
+					SYSLOGE(" ERROR %d", EG(exit_status));
+				} zend_end_try();
 
 				SYSLOG("");
 
@@ -2119,25 +2087,18 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
+				php_output_end_all();
+
+				SYSLOG("");
+
 				zend_try {
-					//php_deactivate_ticks();
-					if (PG(modules_activated)) php_call_shutdown_functions();
-					{
-						zend_bool send_buffer = SG(request_info).headers_only ? 0 : 1;
-
-						if (CG(unclean_shutdown) && PG(last_error_type) == E_ERROR && (size_t)PG(memory_limit) < zend_memory_usage(1)) {
-							send_buffer = 0;
-						}
-
-						if (!send_buffer) {
-							php_output_discard_all();
-						} else {
-							php_output_end_all();
-						}
+					if(PG(modules_activated)) {
+						php_call_shutdown_functions();
+						php_free_shutdown_functions();
 					}
+					SYSLOG("");
 					zend_unset_timeout();
-					php_output_deactivate();
-
+					SYSLOG("");
 					{
 						int i;
 
@@ -2145,8 +2106,18 @@ consult the installation file that came with this distribution, or visit \n\
 							zval_ptr_dtor(&PG(http_globals)[i]);
 						}
 					}
-
-					sapi_deactivate();
+					zend_llist_destroy(&SG(sapi_headers).headers);
+					if (SG(request_info).request_body) {
+						php_stream_close(SG(request_info).request_body);
+						SG(request_info).request_body = NULL;
+					}
+					if (SG(rfc1867_uploaded_files)) {
+						destroy_uploaded_files_hash();
+					}
+					if (SG(sapi_headers).mimetype) {
+						efree(SG(sapi_headers).mimetype);
+						SG(sapi_headers).mimetype = NULL;
+					}
 				} zend_catch {
 					SYSLOGE(" ERROR");
 					zend_bailout();
@@ -2154,6 +2125,7 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
+				fcgi_finish_request(request, 0);
 				fpm_stdio_flush_child();
 
 				SYSLOG(" REQ END");
@@ -2170,7 +2142,6 @@ consult the installation file that came with this distribution, or visit \n\
 			fcgi_destroy_request(request);
 			fcgi_shutdown();
 
-			sapi_activate();
 			php_request_shutdown((void *) 0);
 
 			if (cgi_sapi_module.php_ini_path_override) {
@@ -2182,7 +2153,6 @@ consult the installation file that came with this distribution, or visit \n\
 		} zend_catch {
 			exit_status = FPM_EXIT_SOFTWARE;
 			SYSLOGE(" ERROR");
-			zend_bailout();
 		} zend_end_try();
 
 		CLOSELOG();
