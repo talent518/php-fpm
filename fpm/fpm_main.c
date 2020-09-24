@@ -2075,13 +2075,7 @@ consult the installation file that came with this distribution, or visit \n\
 						res = call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0);
 					} zend_catch {
 						SYSLOGE(" ERROR");
-
-						if (EG(exception)) {
-							zend_exception_error(EG(exception), E_ERROR);
-							EG(exception) = NULL;
-						} else {
-							zend_bailout();
-						}
+						zend_bailout();
 					} zend_end_try();
 
 					if(res == SUCCESS) {
