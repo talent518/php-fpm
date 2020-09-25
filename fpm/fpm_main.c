@@ -257,7 +257,7 @@ static void print_extensions(void) /* {{{ */
 #else
 #	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
 #	define SYSLOG(fmt, args...)
-#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s" fmt, __FILE__, __LINE__, __func__, ##args)
 #	define SYSLOGG(...)
 #	define CLOSELOG() SYSLOGE(" CLOSE");closelog()
 #endif
@@ -521,6 +521,16 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 		}
 		read_bytes += tmp_read_bytes;
 	}
+	
+	SYSLOGG(" => %p %u", buffer, read_bytes);
+	#ifdef FPM_ENTRY_DEBUG
+		if(read_bytes) {
+			char *str2 = estrndup(buffer, read_bytes);
+			SYSLOG(" => %u: %s", read_bytes, str2);
+			efree(str2);
+		}
+	#endif
+
 	return read_bytes;
 }
 /* }}} */
@@ -1595,6 +1605,66 @@ static zend_module_entry cgi_module_entry = {
 	STANDARD_MODULE_PROPERTIES
 };
 
+static void sapi_read_post_data(void)
+{
+	sapi_post_entry *post_entry;
+	uint32_t content_type_length = (uint32_t)strlen(SG(request_info).content_type);
+	char *content_type = estrndup(SG(request_info).content_type, content_type_length);
+	char *p;
+	char oldchar=0;
+	void (*post_reader_func)(void) = NULL;
+
+
+	/* dedicated implementation for increased performance:
+	 * - Make the content type lowercase
+	 * - Trim descriptive data, stay with the content-type only
+	 */
+	for (p=content_type; p<content_type+content_type_length; p++) {
+		switch (*p) {
+			case ';':
+			case ',':
+			case ' ':
+				content_type_length = p-content_type;
+				oldchar = *p;
+				*p = 0;
+				break;
+			default:
+				*p = tolower(*p);
+				break;
+		}
+	}
+
+	/* now try to find an appropriate POST content handler */
+	if ((post_entry = zend_hash_str_find_ptr(&SG(known_post_content_types), content_type,
+			content_type_length)) != NULL) {
+		/* found one, register it for use */
+		SG(request_info).post_entry = post_entry;
+		post_reader_func = post_entry->post_reader;
+	} else {
+		/* fallback */
+		SG(request_info).post_entry = NULL;
+		if (!sapi_module.default_post_reader) {
+			/* no default reader ? */
+			SG(request_info).content_type_dup = NULL;
+			sapi_module.sapi_error(E_WARNING, "Unsupported content type:  '%s'", content_type);
+			return;
+		}
+	}
+	if (oldchar) {
+		*(p-1) = oldchar;
+	}
+
+	SG(request_info).content_type_dup = content_type;
+
+	if(post_reader_func) {
+		post_reader_func();
+	}
+
+	if(sapi_module.default_post_reader) {
+		sapi_module.default_post_reader();
+	}
+}
+
 /* {{{ main
  */
 int main(int argc, char *argv[])
@@ -1930,7 +2000,7 @@ consult the installation file that came with this distribution, or visit \n\
 	if(fpm_globals.php_entry_file && fpm_globals.php_entry_func) {
 		OPENLOG();
 
-		SYSLOG("");
+		SYSLOG(" => %s - %s", fpm_globals.php_entry_file, fpm_globals.php_entry_func);
 
 		zend_first_try {
 			SG(server_context) = NULL;
@@ -1990,6 +2060,12 @@ consult the installation file that came with this distribution, or visit \n\
 
 				fpm_request_info();
 
+				/* check if request_method has been sent.
+				 * if not, it's certainly not an HTTP over fcgi request */
+				if (UNEXPECTED(!SG(request_info).request_method)) {
+					goto fastcgi_request_done2;
+				}
+
 				SYSLOG("");
 
 				zend_try {
@@ -1999,9 +2075,7 @@ consult the installation file that came with this distribution, or visit \n\
 					} else {
 						zend_set_timeout(PG(max_input_time), 1);
 					}
-					php_hash_environment();
-					zend_is_auto_global_str(ZEND_STRL("_SERVER"));
-					zend_is_auto_global_str(ZEND_STRL("_REQUEST"));
+
 					PG(modules_activated) = 1;
 					SG(sapi_started) = 1;
 
@@ -2027,6 +2101,13 @@ consult the installation file that came with this distribution, or visit \n\
 						SG(request_info).headers_only = 0;
 					}
 					SG(rfc1867_uploaded_files) = NULL;
+
+					SG(request_info).cookie_data = sapi_module.read_cookies();
+
+					sapi_read_post_data();
+					php_hash_environment();
+					zend_is_auto_global_str(ZEND_STRL("_SERVER"));
+					zend_is_auto_global_str(ZEND_STRL("_REQUEST"));
 				} zend_catch {
 					SYSLOGE(" ERROR");
 					zend_bailout();
@@ -2057,12 +2138,13 @@ consult the installation file that came with this distribution, or visit \n\
 					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
 
 					if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
+						SYSLOGE(" RETVAL(%lu): %s", Z_STRLEN(retval), Z_STRVAL(retval));
 						zval_ptr_dtor(&retval);
 					}
 
 					zval_ptr_dtor_str(&fname);
 				} zend_catch {
-					SYSLOGE(" ERROR %d", EG(exit_status));
+					SYSLOGE(" CATCH %d", EG(exit_status));
 				} zend_end_try();
 
 				SYSLOG("");
@@ -2093,6 +2175,8 @@ consult the installation file that came with this distribution, or visit \n\
 				SYSLOG("");
 
 				php_output_end_all();
+				sapi_flush();
+				fcgi_finish_request(request, 0);
 
 				SYSLOG("");
 
@@ -2130,7 +2214,6 @@ consult the installation file that came with this distribution, or visit \n\
 
 				SYSLOG("");
 
-				fcgi_finish_request(request, 0);
 				fpm_stdio_flush_child();
 
 				SYSLOG(" REQ END");
