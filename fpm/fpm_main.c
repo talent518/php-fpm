@@ -2138,7 +2138,9 @@ consult the installation file that came with this distribution, or visit \n\
 					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
 
 					if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
-						SYSLOGE(" RETVAL(%lu): %s", Z_STRLEN(retval), Z_STRVAL(retval));
+						if(Z_TYPE(retval) == IS_STRING) {
+							SYSLOGE(" RETVAL(%lu): %s", Z_STRLEN(retval), Z_STRVAL(retval));
+						}
 						zval_ptr_dtor(&retval);
 					}
 
@@ -2175,6 +2177,7 @@ consult the installation file that came with this distribution, or visit \n\
 				SYSLOG("");
 
 				php_output_end_all();
+				php_header();
 				sapi_flush();
 				fcgi_finish_request(request, 0);
 
