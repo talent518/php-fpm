@@ -2150,7 +2150,7 @@ consult the installation file that came with this distribution, or visit \n\
 					zval_ptr_dtor_str(&fname);
 				} zend_catch {
 					SYSLOGE(" CATCH %d", EG(exit_status));
-					if (PG(last_error_message)) {
+					if(Z_TYPE(EG(user_error_handler)) == IS_UNDEF && PG(last_error_message)) {
 						switch(PG(last_error_type)) {
 							case E_ERROR:
 							case E_CORE_ERROR:
@@ -2190,20 +2190,6 @@ consult the installation file that came with this distribution, or visit \n\
 					close(request_body_fd);
 				}
 				request_body_fd = -2;
-
-				SYSLOG("");
-
-				if (UNEXPECTED(EG(exit_status) == 255)) {
-					if (CGIG(error_header) && *CGIG(error_header)) {
-						sapi_header_line ctr = {0};
-
-						ctr.line = CGIG(error_header);
-						ctr.line_len = strlen(CGIG(error_header));
-						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
-
-						SYSLOG(" STATUS");
-					}
-				}
 
 				SYSLOG("");
 
