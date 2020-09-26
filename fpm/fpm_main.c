@@ -2158,12 +2158,13 @@ consult the installation file that came with this distribution, or visit \n\
 							case E_USER_ERROR:
 							case E_PARSE: {
 								char *error_buf = NULL;
+								size_t len;
 
-								spprintf(&error_buf, 0, "%s in %s on line %d", PG(last_error_message), PG(last_error_file), PG(last_error_lineno));
+								len = spprintf(&error_buf, 0, "PHP Fatal error: %s in %s on line %d", PG(last_error_message), PG(last_error_file), PG(last_error_lineno));
 
 								SG(sapi_headers).http_response_code = 500;
 								php_header();
-								PUTS_H(error_buf);
+								PHPWRITE_H(error_buf, len);
 								efree(error_buf);
 								break;
 							}
@@ -2240,6 +2241,8 @@ consult the installation file that came with this distribution, or visit \n\
 					}
 					SYSLOG("");
 					EG(exit_status) = 0;
+					SYSLOG("");
+					php_header();
 					SYSLOG("");
 					php_output_end_all();
 					SYSLOG("");
