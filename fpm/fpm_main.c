@@ -2227,6 +2227,18 @@ consult the installation file that came with this distribution, or visit \n\
 							zval_ptr_dtor(&PG(http_globals)[i]);
 						}
 					}
+
+					SYSLOG("");
+					EG(exit_status) = 0;
+					SYSLOG("");
+					php_output_end_all();
+					SYSLOG("");
+					sapi_flush();
+					SYSLOG("");
+					php_header();
+					SYSLOG("");
+					fcgi_finish_request(request, 0);
+
 					zend_llist_destroy(&SG(sapi_headers).headers);
 					if (SG(request_info).request_body) {
 						php_stream_close(SG(request_info).request_body);
@@ -2239,16 +2251,6 @@ consult the installation file that came with this distribution, or visit \n\
 						efree(SG(sapi_headers).mimetype);
 						SG(sapi_headers).mimetype = NULL;
 					}
-					SYSLOG("");
-					EG(exit_status) = 0;
-					SYSLOG("");
-					php_header();
-					SYSLOG("");
-					php_output_end_all();
-					SYSLOG("");
-					sapi_flush();
-					SYSLOG("");
-					fcgi_finish_request(request, 0);
 				} zend_catch {
 					SYSLOGE(" ERROR");
 					zend_bailout();
