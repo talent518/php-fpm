@@ -2087,6 +2087,7 @@ consult the installation file that came with this distribution, or visit \n\
 					ZVAL_UNDEF(&SG(callback_func));
 					SG(read_post_bytes) = 0;
 					SG(request_info).request_body = NULL;
+					SG(sapi_headers).http_response_code = 200;
 					SG(request_info).current_user = NULL;
 					SG(request_info).current_user_length = 0;
 					SG(request_info).no_headers = 0;
@@ -2103,6 +2104,8 @@ consult the installation file that came with this distribution, or visit \n\
 					SG(rfc1867_uploaded_files) = NULL;
 
 					SG(request_info).cookie_data = sapi_module.read_cookies();
+
+					EG(error_handling) = EH_THROW;
 
 					sapi_read_post_data();
 					php_hash_environment();
@@ -2147,6 +2150,36 @@ consult the installation file that came with this distribution, or visit \n\
 					zval_ptr_dtor_str(&fname);
 				} zend_catch {
 					SYSLOGE(" CATCH %d", EG(exit_status));
+					if (PG(last_error_message)) {
+						switch(PG(last_error_type)) {
+							case E_ERROR:
+							case E_CORE_ERROR:
+							case E_COMPILE_ERROR:
+							case E_USER_ERROR:
+							case E_PARSE: {
+								char *error_buf = NULL;
+
+								spprintf(&error_buf, 0, "%s in %s on line %d", PG(last_error_message), PG(last_error_file), PG(last_error_lineno));
+
+								SG(sapi_headers).http_response_code = 500;
+								php_header();
+								PUTS_H(error_buf);
+								efree(error_buf);
+								break;
+							}
+						}
+
+						PG(last_error_type) = 0;
+						PG(last_error_lineno) = 0;
+
+						free(PG(last_error_message));
+						PG(last_error_message) = NULL;
+
+						if (PG(last_error_file)) {
+							free(PG(last_error_file));
+							PG(last_error_file) = NULL;
+						}
+					}
 				} zend_end_try();
 
 				SYSLOG("");
@@ -2166,6 +2199,8 @@ consult the installation file that came with this distribution, or visit \n\
 						ctr.line = CGIG(error_header);
 						ctr.line_len = strlen(CGIG(error_header));
 						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+
+						SYSLOG(" STATUS");
 					}
 				}
 
@@ -2173,13 +2208,6 @@ consult the installation file that came with this distribution, or visit \n\
 
 				fpm_request_end();
 				fpm_log_write(NULL);
-
-				SYSLOG("");
-
-				php_output_end_all();
-				php_header();
-				sapi_flush();
-				fcgi_finish_request(request, 0);
 
 				SYSLOG("");
 
@@ -2210,6 +2238,14 @@ consult the installation file that came with this distribution, or visit \n\
 						efree(SG(sapi_headers).mimetype);
 						SG(sapi_headers).mimetype = NULL;
 					}
+					SYSLOG("");
+					EG(exit_status) = 0;
+					SYSLOG("");
+					php_output_end_all();
+					SYSLOG("");
+					sapi_flush();
+					SYSLOG("");
+					fcgi_finish_request(request, 0);
 				} zend_catch {
 					SYSLOGE(" ERROR");
 					zend_bailout();
