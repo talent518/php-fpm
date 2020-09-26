@@ -1,11 +1,8 @@
 <?php
 // comment out the following two lines when deployed to production
 
-defined('YII_ENV') or define('YII_ENV', get_cfg_var('env') ?: 'dev');
-// YII_ENV === 'pre' and defined('YII_ENV_PROD', true);
-// defined('YII_DEBUG') or define('YII_DEBUG', YII_ENV !== 'prod');
-define('YII_DEBUG', false);
-define('OFF_API_LOG', true);
+defined('YII_ENV') or define('YII_ENV', 'dev');
+defined('YII_DEBUG') or define('YII_DEBUG', true);
 
 require __DIR__ . '/../vendor/autoload.php';
 require __DIR__ . '/../vendor/yiisoft/yii2/Yii.php';
