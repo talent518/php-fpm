@@ -2257,10 +2257,15 @@ consult the installation file that came with this distribution, or visit \n\
 				/* end of fastcgi loop */
 			}
 
+			SYSLOG(" DESTROY");
 			fcgi_destroy_request(request);
+			SYSLOG(" SHUTDOWN");
 			fcgi_shutdown();
-
+			SYSLOG(" SHUTDOWN");
+			zend_llist_init(&SG(sapi_headers).headers, sizeof(sapi_header_struct), (void (*)(void *)) sapi_free_header, 0);
+			SYSLOG(" SHUTDOWN");
 			php_request_shutdown((void *) 0);
+			SYSLOG(" SHUTDOWN");
 
 			if (cgi_sapi_module.php_ini_path_override) {
 				free(cgi_sapi_module.php_ini_path_override);
@@ -2268,6 +2273,7 @@ consult the installation file that came with this distribution, or visit \n\
 			if (cgi_sapi_module.ini_entries) {
 				free(cgi_sapi_module.ini_entries);
 			}
+			SYSLOG(" SHUTDOWN");
 		} zend_catch {
 			exit_status = FPM_EXIT_SOFTWARE;
 			SYSLOGE(" ERROR");
