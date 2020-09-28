@@ -2073,16 +2073,6 @@ consult the installation file that came with this distribution, or visit \n\
 
 			SYSLOG("");
 
-			zend_try {
-				int i;
-
-				for (i=0; i<NUM_TRACK_VARS; i++) {
-					zval_ptr_dtor(&PG(http_globals)[i]);
-				}
-			} zend_end_try();
-
-			SYSLOG("");
-
 			while (EXPECTED(fcgi_accept_request(request) >= 0)) {
 				request_body_fd = -1;
 				SG(server_context) = (void *) request;
@@ -2138,6 +2128,14 @@ consult the installation file that came with this distribution, or visit \n\
 					SG(request_info).cookie_data = sapi_module.read_cookies();
 
 					EG(error_handling) = EH_THROW;
+
+					{
+						int i;
+
+						for (i=0; i<NUM_TRACK_VARS; i++) {
+							zval_ptr_dtor(&PG(http_globals)[i]);
+						}
+					}
 
 					sapi_read_post_data();
 					php_hash_environment();
@@ -2238,15 +2236,6 @@ consult the installation file that came with this distribution, or visit \n\
 					SYSLOG("");
 					zend_unset_timeout();
 					SYSLOG("");
-					{
-						int i;
-
-						for (i=0; i<NUM_TRACK_VARS; i++) {
-							zval_ptr_dtor(&PG(http_globals)[i]);
-						}
-					}
-
-					SYSLOG("");
 					EG(exit_status) = 0;
 					SYSLOG("");
 					php_output_end_all();
@@ -2256,6 +2245,8 @@ consult the installation file that came with this distribution, or visit \n\
 					php_header();
 					SYSLOG("");
 					fcgi_finish_request(request, 0);
+
+					SG(server_context) = NULL;
 
 					zend_llist_destroy(&SG(sapi_headers).headers);
 					if (SG(request_info).request_body) {
