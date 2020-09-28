@@ -10,10 +10,13 @@ require __DIR__ . '/../vendor/yiisoft/yii2/Yii.php';
 function yii_application_run() {
 	undefine('YII_BEGIN_TIME');
 	define('YII_BEGIN_TIME', microtime(true));
-	$config = require __DIR__ . '/../config/web.php';
-	(new yii\web\Application($config))->run();
-	rev_close(\Yii::$app);
-	\Yii::$app = null;
+	try {
+		$config = require __DIR__ . '/../config/web.php';
+		(new yii\web\Application($config))->run();
+	} finally {
+		rev_close(\Yii::$app);
+		\Yii::$app = null;
+	}
 }
 
 function rev_close(object $obj) {
