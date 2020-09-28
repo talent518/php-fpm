@@ -1534,6 +1534,10 @@ static PHP_MINFO_FUNCTION(cgi)
 ZEND_BEGIN_ARG_INFO(cgi_fcgi_sapi_no_arginfo, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO_EX(undefine_arginfo, 0, 0, 1)
+	ZEND_ARG_TYPE_INFO(0, constant_name, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 PHP_FUNCTION(fastcgi_finish_request) /* {{{ */
 {
 	fcgi_request *request = (fcgi_request*) SG(server_context);
@@ -1584,11 +1588,39 @@ PHP_FUNCTION(fpm_get_status) /* {{{ */
 }
 /* }}} */
 
+PHP_FUNCTION(undefine) /* {{{ */
+{
+	char *name = NULL;
+	zend_long name_len = 0;
+	zend_constant *c;
+
+	if (zend_parse_parameters_throw(ZEND_NUM_ARGS(), "s", &name, &name_len) == FAILURE) {
+		return;
+	}
+
+	SYSLOG(" %p %s:%ld", EG(zend_constants), name, name_len);
+
+	c = zend_hash_str_find_ptr(EG(zend_constants), name, name_len);
+	if(c == NULL || ZEND_CONSTANT_MODULE_NUMBER(c) != PHP_USER_CONSTANT) {
+		SYSLOG("");
+		RETURN_FALSE;
+	}
+
+	if(zend_hash_str_del(EG(zend_constants), name, name_len) == SUCCESS) {
+		SYSLOG("");
+		RETURN_TRUE;
+	} else {
+		SYSLOG("");
+		RETURN_FALSE;
+	}
+}
+
 static const zend_function_entry cgi_fcgi_sapi_functions[] = {
 	PHP_FE(fastcgi_finish_request,                    cgi_fcgi_sapi_no_arginfo)
 	PHP_FE(fpm_get_status,                            cgi_fcgi_sapi_no_arginfo)
 	PHP_FE(apache_request_headers,                    cgi_fcgi_sapi_no_arginfo)
 	PHP_FALIAS(getallheaders, apache_request_headers, cgi_fcgi_sapi_no_arginfo)
+	PHP_FE(undefine,                                  undefine_arginfo)
 	PHP_FE_END
 };
 
