@@ -1734,6 +1734,16 @@ register_constant:
 
 	SYSLOG("");
 
+	zval *zv = zend_get_constant(name);
+	if(zv) {
+		SYSLOG("");
+		ZVAL_COPY(zv, val);
+		SYSLOG("");
+		RETURN_TRUE;
+	}
+
+	SYSLOG("");
+
 	/* non persistent */
 	ZEND_CONSTANT_SET_FLAGS(&c, case_sensitive, PHP_USER_CONSTANT);
 	c.name = zend_string_copy(name);
@@ -1741,16 +1751,8 @@ register_constant:
 		SYSLOG("");
 		RETURN_TRUE;
 	} else {
-		zval *zv = zend_get_constant(name);
-		if(zv) {
-			SYSLOG("");
-			ZVAL_COPY(zv, val);
-			SYSLOG("");
-			RETURN_TRUE;
-		} else {
-			SYSLOG("");
-			RETURN_FALSE;
-		}
+		SYSLOG("");
+		RETURN_FALSE;
 	}
 }
 
