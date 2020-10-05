@@ -2171,6 +2171,12 @@ consult the installation file that came with this distribution, or visit \n\
 	request = fpm_init_request(fcgi_fd);
 
 	if(fpm_globals.php_entry_file && fpm_globals.php_entry_func) {
+		char pidstr[20], ppidstr[20], memoryUsageStr[64], memoryPeakUsageStr[64];
+		size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", getpid());
+		size_t ppidlen = snprintf(ppidstr, sizeof(ppidstr), "PPid: %d", getppid());
+		size_t memoryUsageLen;
+		size_t memoryPeakUsageLen;
+
 		OPENLOG();
 
 		SYSLOG(" => %s - %s", fpm_globals.php_entry_file, fpm_globals.php_entry_func);
@@ -2291,6 +2297,13 @@ consult the installation file that came with this distribution, or visit \n\
 
 				if (PG(expose_php)) {
 					sapi_add_header(SAPI_PHP_VERSION_HEADER, sizeof(SAPI_PHP_VERSION_HEADER)-1, 1);
+					sapi_add_header(pidstr, pidlen, 1);
+					sapi_add_header(ppidstr, ppidlen, 1);
+
+					memoryUsageLen = snprintf(memoryUsageStr, sizeof(memoryUsageStr), "Memory-Usage: %ld", zend_memory_usage(1));
+					memoryPeakUsageLen = snprintf(memoryPeakUsageStr, sizeof(memoryPeakUsageStr), "Memory-Peak-Usage: %ld", zend_memory_peak_usage(1));
+					sapi_add_header(memoryUsageStr, memoryUsageLen, 1);
+					sapi_add_header(memoryPeakUsageStr, memoryPeakUsageLen, 1);
 				}
 
 				SYSLOG("");
@@ -2388,6 +2401,8 @@ consult the installation file that came with this distribution, or visit \n\
 					fcgi_finish_request(request, 0);
 
 					SG(server_context) = NULL;
+
+					if(gc_enabled()) SYSLOGE(" GC: %d", gc_collect_cycles());
 
 					zend_llist_destroy(&SG(sapi_headers).headers);
 					if (SG(request_info).request_body) {
