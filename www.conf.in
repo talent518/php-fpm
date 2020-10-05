@@ -440,4 +440,5 @@ pm.max_spare_servers = 3
 
 ; PHP code is loaded once and run multiple times.
 ;php_entry_file=
-;php_entry_func=
+;php_entry_run=
+;php_entry_clean=

@@ -252,7 +252,7 @@ static void print_extensions(void) /* {{{ */
 #	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOG(" OPEN")
 #	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
 #	define SYSLOGE SYSLOG
-#	define SYSLOGG(fmt, args...) if(fpm_globals.php_entry_file && fpm_globals.php_entry_func){SYSLOG(fmt, ##args);}
+#	define SYSLOGG(fmt, args...) if(fpm_globals.php_entry_file && fpm_globals.php_entry_run){SYSLOG(fmt, ##args);}
 #	define CLOSELOG() SYSLOG(" CLOSE");closelog()
 #else
 #	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
@@ -2170,7 +2170,7 @@ consult the installation file that came with this distribution, or visit \n\
 	/* library is already initialized, now init our request */
 	request = fpm_init_request(fcgi_fd);
 
-	if(fpm_globals.php_entry_file && fpm_globals.php_entry_func) {
+	if(fpm_globals.php_entry_file && fpm_globals.php_entry_run) {
 		char pidstr[20], ppidstr[20], memoryUsageStr[64], memoryPeakUsageStr[64];
 		size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", getpid());
 		size_t ppidlen = snprintf(ppidstr, sizeof(ppidstr), "PPid: %d", getppid());
@@ -2179,7 +2179,7 @@ consult the installation file that came with this distribution, or visit \n\
 
 		OPENLOG();
 
-		SYSLOG(" => %s - %s", fpm_globals.php_entry_file, fpm_globals.php_entry_func);
+		SYSLOG(" => %s - %s", fpm_globals.php_entry_file, fpm_globals.php_entry_run);
 
 		zend_first_try {
 			SG(server_context) = NULL;
@@ -2322,7 +2322,7 @@ consult the installation file that came with this distribution, or visit \n\
 				zend_try {
 					zval fname, retval;
 
-					ZVAL_STRING(&fname, fpm_globals.php_entry_func);
+					ZVAL_STRING(&fname, fpm_globals.php_entry_run);
 
 					if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
 						if(Z_TYPE(retval) == IS_STRING) {
@@ -2334,7 +2334,7 @@ consult the installation file that came with this distribution, or visit \n\
 					zval_ptr_dtor_str(&fname);
 				} zend_catch {
 					SYSLOGE(" CATCH %d", EG(exit_status));
-					if(Z_TYPE(EG(user_error_handler)) == IS_UNDEF && PG(last_error_message)) {
+					if(Z_TYPE(EG(user_error_handler)) == IS_UNDEF && PG(display_errors) && PG(last_error_message)) {
 						switch(PG(last_error_type)) {
 							case E_ERROR:
 							case E_CORE_ERROR:
@@ -2386,6 +2386,26 @@ consult the installation file that came with this distribution, or visit \n\
 					if(PG(modules_activated)) {
 						php_call_shutdown_functions();
 						php_free_shutdown_functions();
+					}
+					if(fpm_globals.php_entry_clean) {
+						zend_try {
+							zval fname, retval;
+
+							ZVAL_STRING(&fname, fpm_globals.php_entry_clean);
+
+							EG(exit_status) = 0;
+
+							if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
+								if(Z_TYPE(retval) == IS_STRING) {
+									SYSLOGE(" RETVAL(%lu): %s", Z_STRLEN(retval), Z_STRVAL(retval));
+								}
+								zval_ptr_dtor(&retval);
+							}
+
+							zval_ptr_dtor_str(&fname);
+						} zend_catch {
+							SYSLOGE(" CATCH %d", EG(exit_status));
+						} zend_end_try();
 					}
 					SYSLOG("");
 					zend_unset_timeout();

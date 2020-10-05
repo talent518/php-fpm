@@ -56,7 +56,8 @@ struct fpm_globals_s {
 	int force_stderr;
 	int send_config_pipe[2];
 	char *php_entry_file;
-	char *php_entry_func;
+	char *php_entry_run;
+	char *php_entry_clean;
 };
 
 extern struct fpm_globals_s fpm_globals;

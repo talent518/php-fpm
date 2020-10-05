@@ -160,7 +160,8 @@ static struct ini_value_parser_s ini_fpm_pool_options[] = {
 	{ "apparmor_hat",              &fpm_conf_set_string,      WPO(apparmor_hat) },
 #endif
 	{ "php_entry_file",            &fpm_conf_set_string,      WPO(php_entry_file) },
-	{ "php_entry_func",            &fpm_conf_set_string,      WPO(php_entry_func) },
+	{ "php_entry_run",             &fpm_conf_set_string,      WPO(php_entry_run) },
+	{ "php_entry_clean",           &fpm_conf_set_string,      WPO(php_entry_clean) },
 	{ 0, 0, 0 }
 };
 
