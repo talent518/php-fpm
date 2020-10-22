@@ -2480,6 +2480,7 @@ consult the installation file that came with this distribution, or visit \n\
 
 		CLOSELOG();
 	} else {
+		OPENLOG();
 		zend_first_try {
 			while (EXPECTED(fcgi_accept_request(request) >= 0)) {
 				char *primary_script = NULL;
@@ -2525,34 +2526,20 @@ consult the installation file that came with this distribution, or visit \n\
 					goto fastcgi_request_done;
 				}
 
-				/*
-				 * have to duplicate SG(request_info).path_translated to be able to log errrors
-				 * php_fopen_primary_script seems to delete SG(request_info).path_translated on failure
-				 */
-				primary_script = estrdup(SG(request_info).path_translated);
-
-				/* path_translated exists, we can continue ! */
-				if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
-					zend_try {
-						zlog(ZLOG_ERROR, "Unable to open primary script: %s (%s)", primary_script, strerror(errno));
-						if (errno == EACCES) {
-							SG(sapi_headers).http_response_code = 403;
-							PUTS("Access denied.\n");
-						} else {
-							SG(sapi_headers).http_response_code = 404;
-							PUTS("No input file specified.\n");
-						}
-					} zend_catch {
-					} zend_end_try();
-					/* we want to serve more requests if this is fastcgi
-					 * so cleanup and continue, request shutdown is
-					 * handled later */
-
-					goto fastcgi_request_done;
+				{
+					char path[PATH_MAX];
+					if(realpath(SG(request_info).path_translated, path)) {
+						primary_script = estrdup(path);
+					} else {
+						primary_script = estrdup(SG(request_info).path_translated);
+					}
 				}
+
+				SYSLOGE(" SCRIPT: %s", primary_script);
 
 				fpm_request_executing();
 
+				zend_stream_init_filename(&file_handle, primary_script);
 				php_execute_script(&file_handle);
 
 	fastcgi_request_done:
@@ -2605,6 +2592,7 @@ consult the installation file that came with this distribution, or visit \n\
 		} zend_catch {
 			exit_status = FPM_EXIT_SOFTWARE;
 		} zend_end_try();
+		CLOSELOG();
 	}
 
 out:
