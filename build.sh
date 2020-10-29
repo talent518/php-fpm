@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-php=php
+php=${2:-php}
 ZTS=
 if [ "x$1" = "xzts" ]; then
 	ZTS="--enable-maintainer-zts --with-tsrm-pthreads"
-	php="phpts"
+	php=${2:-phpts}
 else
 	ZTS="--with-mm"
 fi
