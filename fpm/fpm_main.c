@@ -268,14 +268,6 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 
 	SYSLOGG(" => %p %u", str, str_length);
 
-	#ifdef FPM_ENTRY_DEBUG
-		if(str) {
-			char *str2 = estrndup(str, str_length);
-			SYSLOG(" => %u: %s", str_length, str2);
-			efree(str2);
-		}
-	#endif
-
 	/* sapi has started which means everyhting must be send through fcgi */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
@@ -312,6 +304,30 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 	size_t ret;
 
 	SYSLOGG(" => %p %ld", str, str_length);
+
+	#ifdef FPM_ENTRY_DEBUG
+		if(str && str_length) {
+			int size = MIN(str_length, 4*1024);
+			char *str2 = estrndup(str, size);
+
+			loop:
+			SYSLOG(" => %u: %s", size, str2);
+			remaining -= size;
+			ptr += size;
+			if(remaining > 0) {
+				if(remaining < size) {
+					size = remaining;
+				}
+				memcpy(str2, ptr, size);
+				str2[size] = '\0';
+				goto loop;
+			}
+			efree(str2);
+
+			ptr = str;
+			remaining = str_length;
+		}
+	#endif
 
 	while (remaining > 0) {
 		ret = sapi_cgibin_single_write(ptr, remaining);
@@ -2526,7 +2542,7 @@ consult the installation file that came with this distribution, or visit \n\
 					}
 				}
 
-				SYSLOGE(" SCRIPT: %s", primary_script);
+				SYSLOG(" SCRIPT: %s", primary_script);
 
 				fpm_request_executing();
 
