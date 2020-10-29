@@ -311,16 +311,7 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 	uint32_t remaining = str_length;
 	size_t ret;
 
-
 	SYSLOGG(" => %p %ld", str, str_length);
-
-	#ifdef FPM_ENTRY_DEBUG
-		if(str) {
-			char *str2 = estrndup(str, str_length);
-			SYSLOG(" => %ld: %s", str_length, str2);
-			efree(str2);
-		}
-	#endif
 
 	while (remaining > 0) {
 		ret = sapi_cgibin_single_write(ptr, remaining);
