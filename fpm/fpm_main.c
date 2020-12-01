@@ -2311,7 +2311,7 @@ consult the installation file that came with this distribution, or visit \n\
 								char *error_buf = NULL;
 								size_t len;
 
-								len = spprintf(&error_buf, 0, "PHP Fatal error: %s in %s on line %d", PG(last_error_message), PG(last_error_file), PG(last_error_lineno));
+								len = spprintf(&error_buf, 0, "PHP Fatal error: %s in %s on line %d", ZSTR_VAL(PG(last_error_message)), PG(last_error_file), PG(last_error_lineno));
 
 								SG(sapi_headers).http_response_code = 500;
 								php_header();
