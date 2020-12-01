@@ -39,6 +39,9 @@ struct fpm_globals_s fpm_globals = {
 	.run_as_root = 0,
 	.force_stderr = 0,
 	.send_config_pipe = {0, 0},
+	.php_entry_file = NULL,
+	.php_entry_run = NULL,
+	.php_entry_clean = NULL,
 };
 
 int fpm_init(int argc, char **argv, char *config, char *prefix, char *pid, int test_conf, int run_as_root, int force_daemon, int force_stderr) /* {{{ */

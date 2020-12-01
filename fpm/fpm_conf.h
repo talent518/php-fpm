@@ -97,6 +97,9 @@ struct fpm_worker_pool_config_s {
 #ifdef HAVE_APPARMOR
 	char *apparmor_hat;
 #endif
+	char *php_entry_file;
+	char *php_entry_run;
+	char *php_entry_clean;
 #ifdef HAVE_FPM_ACL
 	/* Using Posix ACL */
 	char *listen_acl_users;

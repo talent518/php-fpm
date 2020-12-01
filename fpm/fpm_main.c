@@ -27,6 +27,10 @@
 #include "zend_ini_scanner.h"
 #include "zend_globals.h"
 #include "zend_stream.h"
+#include "zend_types.h"
+#include "php_ticks.h"
+#include "zend_exceptions.h"
+#include "rfc1867.h"
 
 #include "SAPI.h"
 
@@ -56,6 +60,8 @@
 #ifdef HAVE_FCNTL_H
 # include <fcntl.h>
 #endif
+
+#include <syslog.h>
 
 #include "zend.h"
 #include "zend_extensions.h"
@@ -237,19 +243,41 @@ static void print_extensions(void) /* {{{ */
 #define STDOUT_FILENO 1
 #endif
 
+#ifdef FPM_ENTRY_DEBUG
+#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOG(" OPEN")
+#	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGE SYSLOG
+#	define SYSLOGG(fmt, args...) if(fpm_globals.php_entry_file && fpm_globals.php_entry_run){SYSLOG(fmt, ##args);}
+#	define CLOSELOG() SYSLOG(" CLOSE");closelog()
+#else
+#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
+#	define SYSLOG(fmt, args...)
+#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s" fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGG(...)
+#	define CLOSELOG() SYSLOGE(" CLOSE");closelog()
+#endif
+
 static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_length) /* {{{ */
 {
 	ssize_t ret;
 
 	/* sapi has started which means everything must be send through fcgi */
+	SYSLOGG(" => %p %u", str, str_length);
+
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
+		if(!request) return 0;
+
 		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
 		if (ret <= 0) {
+			SYSLOGG(" ERROR");
 			return 0;
 		}
+		SYSLOGG("");
 		return (size_t)ret;
 	}
+
+	SYSLOGG("");
 
 	/* sapi has not started, output to stdout instead of fcgi */
 #ifdef PHP_WRITE_STDOUT
@@ -270,9 +298,36 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 	uint32_t remaining = str_length;
 	size_t ret;
 
+	SYSLOGG(" => %p %ld", str, str_length);
+
+	#ifdef FPM_ENTRY_DEBUG
+		if(str && str_length) {
+			int size = MIN(str_length, 4*1024);
+			char *str2 = estrndup(str, size);
+
+			loop:
+			SYSLOG(" => %u: %s", size, str2);
+			remaining -= size;
+			ptr += size;
+			if(remaining > 0) {
+				if(remaining < size) {
+					size = remaining;
+				}
+				memcpy(str2, ptr, size);
+				str2[size] = '\0';
+				goto loop;
+			}
+			efree(str2);
+
+			ptr = str;
+			remaining = str_length;
+		}
+	#endif
+
 	while (remaining > 0) {
 		ret = sapi_cgibin_single_write(ptr, remaining);
 		if (!ret) {
+			SYSLOGG("");
 			php_handle_aborted_connection();
 			return str_length - remaining;
 		}
@@ -280,18 +335,23 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 		remaining -= ret;
 	}
 
+	SYSLOGG("");
+
 	return str_length;
 }
 /* }}} */
 
 static void sapi_cgibin_flush(void *server_context) /* {{{ */
 {
+	SYSLOGG(" FLUSH");
+
 	/* fpm has started, let use fcgi instead of stdout */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) server_context;
 		if (!parent && request && !fcgi_flush(request, 0)) {
 			php_handle_aborted_connection();
 		}
+		SYSLOGG("");
 		return;
 	}
 
@@ -299,6 +359,7 @@ static void sapi_cgibin_flush(void *server_context) /* {{{ */
 	if (fflush(stdout) == EOF) {
 		php_handle_aborted_connection();
 	}
+	SYSLOGG("");
 }
 /* }}} */
 
@@ -435,6 +496,8 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 	}
 	while (read_bytes < count_bytes) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
+		if(!request) return 0;
+
 		if (request_body_fd == -1) {
 			char *request_body_filename = FCGI_GETENV(request, "REQUEST_BODY_FILE");
 
@@ -460,6 +523,16 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 		}
 		read_bytes += tmp_read_bytes;
 	}
+	
+	SYSLOGG(" => %p %u", buffer, read_bytes);
+	#ifdef FPM_ENTRY_DEBUG
+		if(read_bytes) {
+			char *str2 = estrndup(buffer, read_bytes);
+			SYSLOG(" => %u: %s", read_bytes, str2);
+			efree(str2);
+		}
+	#endif
+
 	return read_bytes;
 }
 /* }}} */
@@ -469,7 +542,7 @@ static char *sapi_cgibin_getenv(const char *name, size_t name_len) /* {{{ */
 	/* if fpm has started, use fcgi env */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
-		return fcgi_getenv(request, name, name_len);
+		if(request) return fcgi_getenv(request, name, name_len);
 	}
 
 	/* if fpm has not started yet, use std env */
@@ -497,7 +570,7 @@ static char *sapi_cgi_read_cookies(void) /* {{{ */
 {
 	fcgi_request *request = (fcgi_request*) SG(server_context);
 
-	return FCGI_GETENV(request, "HTTP_COOKIE");
+	return request ? FCGI_GETENV(request, "HTTP_COOKIE") : NULL;
 }
 /* }}} */
 
@@ -537,7 +610,10 @@ void cgi_php_import_environment_variables(zval *array_ptr) /* {{{ */
 	php_php_import_environment_variables(array_ptr);
 
 	request = (fcgi_request*) SG(server_context);
-	fcgi_loadenv(request, cgi_php_load_env_var, array_ptr);
+
+	if(request) {
+		fcgi_loadenv(request, cgi_php_load_env_var, array_ptr);
+	}
 }
 /* }}} */
 
@@ -688,6 +764,8 @@ static int sapi_cgi_activate(void) /* {{{ */
 	char *path, *doc_root, *server_name;
 	uint32_t path_len, doc_root_len, server_name_len;
 
+	if(!request) return SUCCESS;
+
 	/* PATH_TRANSLATED should be defined at this stage but better safe than sorry :) */
 	if (!SG(request_info).path_translated) {
 		return FAILURE;
@@ -754,7 +832,7 @@ static int sapi_cgi_deactivate(void) /* {{{ */
 		1. SAPI Deactivate is called from two places: module init and request shutdown
 		2. When the first call occurs and the request is not set up, flush fails on FastCGI.
 	*/
-	if (SG(sapi_started)) {
+	if (SG(sapi_started) && SG(server_context)) {
 		if (!parent && !fcgi_finish_request((fcgi_request*)SG(server_context), 0)) {
 			php_handle_aborted_connection();
 		}
@@ -1496,6 +1574,164 @@ PHP_FUNCTION(fpm_get_status) /* {{{ */
 }
 /* }}} */
 
+static int validate_constant_array(HashTable *ht) /* {{{ */
+{
+	int ret = 1;
+	zval *val;
+
+	GC_PROTECT_RECURSION(ht);
+	ZEND_HASH_FOREACH_VAL_IND(ht, val) {
+		ZVAL_DEREF(val);
+		if (Z_REFCOUNTED_P(val)) {
+			if (Z_TYPE_P(val) == IS_ARRAY) {
+				if (Z_REFCOUNTED_P(val)) {
+					if (Z_IS_RECURSIVE_P(val)) {
+						zend_error(E_WARNING, "Constants cannot be recursive arrays");
+						ret = 0;
+						break;
+					} else if (!validate_constant_array(Z_ARRVAL_P(val))) {
+						ret = 0;
+						break;
+					}
+				}
+			} else if (Z_TYPE_P(val) != IS_STRING && Z_TYPE_P(val) != IS_RESOURCE) {
+				zend_error(E_WARNING, "Constants may only evaluate to scalar values, arrays or resources");
+				ret = 0;
+				break;
+			}
+		}
+	} ZEND_HASH_FOREACH_END();
+	GC_UNPROTECT_RECURSION(ht);
+	return ret;
+}
+/* }}} */
+
+static void copy_constant_array(zval *dst, zval *src) /* {{{ */
+{
+	zend_string *key;
+	zend_ulong idx;
+	zval *new_val, *val;
+
+	array_init_size(dst, zend_hash_num_elements(Z_ARRVAL_P(src)));
+	ZEND_HASH_FOREACH_KEY_VAL_IND(Z_ARRVAL_P(src), idx, key, val) {
+		/* constant arrays can't contain references */
+		ZVAL_DEREF(val);
+		if (key) {
+			new_val = zend_hash_add_new(Z_ARRVAL_P(dst), key, val);
+		} else {
+			new_val = zend_hash_index_add_new(Z_ARRVAL_P(dst), idx, val);
+		}
+		if (Z_TYPE_P(val) == IS_ARRAY) {
+			if (Z_REFCOUNTED_P(val)) {
+				copy_constant_array(new_val, val);
+			}
+		} else {
+			Z_TRY_ADDREF_P(val);
+		}
+	} ZEND_HASH_FOREACH_END();
+}
+/* }}} */
+
+PHP_FUNCTION(redefine) /* {{{ */
+{
+	zend_string *name;
+	zval *val, val_free;
+	zend_bool non_cs = 0;
+	int case_sensitive = CONST_CS;
+	zend_constant c;
+
+	ZEND_PARSE_PARAMETERS_START(2, 3)
+		Z_PARAM_STR(name)
+		Z_PARAM_ZVAL(val)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_BOOL(non_cs)
+	ZEND_PARSE_PARAMETERS_END();
+
+	if (non_cs) {
+		case_sensitive = 0;
+	}
+
+	SYSLOG(" %s", ZSTR_VAL(name));
+
+	if (zend_memnstr(ZSTR_VAL(name), "::", sizeof("::") - 1, ZSTR_VAL(name) + ZSTR_LEN(name))) {
+		zend_error(E_WARNING, "Class constants cannot be defined or redefined");
+		RETURN_FALSE;
+	}
+
+	SYSLOG("");
+
+	ZVAL_UNDEF(&val_free);
+
+	SYSLOG("");
+
+	switch (Z_TYPE_P(val)) {
+		case IS_LONG:
+		case IS_DOUBLE:
+		case IS_STRING:
+		case IS_FALSE:
+		case IS_TRUE:
+		case IS_NULL:
+		case IS_RESOURCE:
+			break;
+		case IS_ARRAY:
+			if (Z_REFCOUNTED_P(val)) {
+				if (!validate_constant_array(Z_ARRVAL_P(val))) {
+					RETURN_FALSE;
+				} else {
+					copy_constant_array(&c.value, val);
+					goto register_constant;
+				}
+			}
+			break;
+		case IS_OBJECT:
+			if (Z_OBJ_HT_P(val)->cast_object(Z_OBJ_P(val), &val_free, IS_STRING) == SUCCESS) {
+				val = &val_free;
+				break;
+			}
+			/* no break */
+		default:
+			zend_error(E_WARNING, "Constants may only evaluate to scalar values, arrays or resources");
+			zval_ptr_dtor(&val_free);
+			RETURN_FALSE;
+	}
+
+	SYSLOG("");
+
+	ZVAL_COPY(&c.value, val);
+	zval_ptr_dtor(&val_free);
+
+	SYSLOG("");
+
+register_constant:
+	if (non_cs) {
+		zend_error(E_DEPRECATED,
+			"define(): Declaration of case-insensitive constants is deprecated");
+	}
+
+	SYSLOG("");
+
+	zval *zv = zend_get_constant(name);
+	if(zv) {
+		SYSLOG("");
+		ZVAL_COPY(zv, val);
+		SYSLOG("");
+		RETURN_TRUE;
+	}
+
+	SYSLOG("");
+
+	/* non persistent */
+	ZEND_CONSTANT_SET_FLAGS(&c, case_sensitive, PHP_USER_CONSTANT);
+	c.name = zend_string_copy(name);
+	if (zend_register_constant(&c) == SUCCESS) {
+		SYSLOG("");
+		RETURN_TRUE;
+	} else {
+		SYSLOG("");
+		RETURN_FALSE;
+	}
+}
+
 static zend_module_entry cgi_module_entry = {
 	STANDARD_MODULE_HEADER,
 	"cgi-fcgi",
@@ -1509,7 +1745,68 @@ static zend_module_entry cgi_module_entry = {
 	STANDARD_MODULE_PROPERTIES
 };
 
-/* {{{ main */
+static void sapi_read_post_data(void)
+{
+	sapi_post_entry *post_entry;
+	uint32_t content_type_length = (uint32_t)strlen(SG(request_info).content_type);
+	char *content_type = estrndup(SG(request_info).content_type, content_type_length);
+	char *p;
+	char oldchar=0;
+	void (*post_reader_func)(void) = NULL;
+
+
+	/* dedicated implementation for increased performance:
+	 * - Make the content type lowercase
+	 * - Trim descriptive data, stay with the content-type only
+	 */
+	for (p=content_type; p<content_type+content_type_length; p++) {
+		switch (*p) {
+			case ';':
+			case ',':
+			case ' ':
+				content_type_length = p-content_type;
+				oldchar = *p;
+				*p = 0;
+				break;
+			default:
+				*p = tolower(*p);
+				break;
+		}
+	}
+
+	/* now try to find an appropriate POST content handler */
+	if ((post_entry = zend_hash_str_find_ptr(&SG(known_post_content_types), content_type,
+			content_type_length)) != NULL) {
+		/* found one, register it for use */
+		SG(request_info).post_entry = post_entry;
+		post_reader_func = post_entry->post_reader;
+	} else {
+		/* fallback */
+		SG(request_info).post_entry = NULL;
+		if (!sapi_module.default_post_reader) {
+			/* no default reader ? */
+			SG(request_info).content_type_dup = NULL;
+			sapi_module.sapi_error(E_WARNING, "Unsupported content type:  '%s'", content_type);
+			return;
+		}
+	}
+	if (oldchar) {
+		*(p-1) = oldchar;
+	}
+
+	SG(request_info).content_type_dup = content_type;
+
+	if(post_reader_func) {
+		post_reader_func();
+	}
+
+	if(sapi_module.default_post_reader) {
+		sapi_module.default_post_reader();
+	}
+}
+
+/* {{{ main
+ */
 int main(int argc, char *argv[])
 {
 	int exit_status = FPM_EXIT_OK;
@@ -1840,61 +2137,35 @@ consult the installation file that came with this distribution, or visit \n\
 	/* library is already initialized, now init our request */
 	request = fpm_init_request(fcgi_fd);
 
-	zend_first_try {
-		while (EXPECTED(fcgi_accept_request(request) >= 0)) {
-			char *primary_script = NULL;
-			request_body_fd = -1;
-			SG(server_context) = (void *) request;
-			init_request_info();
+	if(fpm_globals.php_entry_file && fpm_globals.php_entry_run) {
+		char pidstr[20], ppidstr[20], memoryUsageStr[64], memoryPeakUsageStr[64];
+		size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", getpid());
+		size_t ppidlen = snprintf(ppidstr, sizeof(ppidstr), "PPid: %d", getppid());
+		size_t memoryUsageLen;
+		size_t memoryPeakUsageLen;
 
-			fpm_request_info();
+		OPENLOG();
+
+		SYSLOG(" => %s - %s", fpm_globals.php_entry_file, fpm_globals.php_entry_run);
+
+		zend_first_try {
+			SG(server_context) = NULL;
 
 			/* request startup only after we've done all we can to
 			 *            get path_translated */
 			if (UNEXPECTED(php_request_startup() == FAILURE)) {
-				fcgi_finish_request(request, 1);
-				SG(server_context) = NULL;
 				php_module_shutdown();
 				return FPM_EXIT_SOFTWARE;
 			}
 
-			/* check if request_method has been sent.
-			 * if not, it's certainly not an HTTP over fcgi request */
-			if (UNEXPECTED(!SG(request_info).request_method)) {
-				goto fastcgi_request_done;
-			}
+			SYSLOG("");
 
-			if (UNEXPECTED(fpm_status_handle_request())) {
-				goto fastcgi_request_done;
-			}
-
-			/* If path_translated is NULL, terminate here with a 404 */
-			if (UNEXPECTED(!SG(request_info).path_translated)) {
-				zend_try {
-					zlog(ZLOG_DEBUG, "Primary script unknown");
-					SG(sapi_headers).http_response_code = 404;
-					PUTS("File not found.\n");
-				} zend_catch {
-				} zend_end_try();
-				goto fastcgi_request_done;
-			}
-
-			if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
-				SG(sapi_headers).http_response_code = 403;
-				PUTS("Access denied.\n");
-				goto fastcgi_request_done;
-			}
-
-			/*
-			 * have to duplicate SG(request_info).path_translated to be able to log errors
-			 * php_fopen_primary_script seems to delete SG(request_info).path_translated on failure
-			 */
-			primary_script = estrdup(SG(request_info).path_translated);
+			SG(request_info).path_translated = fpm_globals.php_entry_file;
 
 			/* path_translated exists, we can continue ! */
 			if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
 				zend_try {
-					zlog(ZLOG_ERROR, "Unable to open primary script: %s (%s)", primary_script, strerror(errno));
+					zlog(ZLOG_ERROR, "Unable to open primary script: %s (%s)", fpm_globals.php_entry_file, strerror(errno));
 					if (errno == EACCES) {
 						SG(sapi_headers).http_response_code = 403;
 						PUTS("Access denied.\n");
@@ -1904,67 +2175,392 @@ consult the installation file that came with this distribution, or visit \n\
 					}
 				} zend_catch {
 				} zend_end_try();
-				/* we want to serve more requests if this is fastcgi
-				 * so cleanup and continue, request shutdown is
-				 * handled later */
 
-				goto fastcgi_request_done;
+				php_request_shutdown((void *) 0);
+				php_module_shutdown();
+				return FPM_EXIT_SOFTWARE;
 			}
 
-			fpm_request_executing();
+			SYSLOG("");
 
 			php_execute_script(&file_handle);
 
-fastcgi_request_done:
-			if (EXPECTED(primary_script)) {
-				efree(primary_script);
-			}
+			SYSLOG("");
 
-			if (UNEXPECTED(request_body_fd != -1)) {
-				close(request_body_fd);
-			}
-			request_body_fd = -2;
+			while (EXPECTED(fcgi_accept_request(request) >= 0)) {
+				request_body_fd = -1;
+				SG(server_context) = (void *) request;
+				init_request_info();
 
-			if (UNEXPECTED(EG(exit_status) == 255)) {
-				if (CGIG(error_header) && *CGIG(error_header)) {
-					sapi_header_line ctr = {0};
+				SYSLOG("REQ BEGIN");
 
-					ctr.line = CGIG(error_header);
-					ctr.line_len = strlen(CGIG(error_header));
-					sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+				fpm_request_info();
+
+				/* check if request_method has been sent.
+				 * if not, it's certainly not an HTTP over fcgi request */
+				if (UNEXPECTED(!SG(request_info).request_method)) {
+					goto fastcgi_request_done2;
 				}
+
+				SYSLOG("");
+
+				zend_try {
+					PG(modules_activated) = 0;
+					if (PG(max_input_time) == -1) {
+						zend_set_timeout(EG(timeout_seconds), 1);
+					} else {
+						zend_set_timeout(PG(max_input_time), 1);
+					}
+
+					PG(modules_activated) = 1;
+					SG(sapi_started) = 1;
+
+					zend_llist_init(&SG(sapi_headers).headers, sizeof(sapi_header_struct), (void (*)(void *)) sapi_free_header, 0);
+					SG(sapi_headers).send_default_content_type = 1;
+					SG(sapi_headers).http_status_line = NULL;
+					SG(sapi_headers).mimetype = NULL;
+					SG(headers_sent) = 0;
+					ZVAL_UNDEF(&SG(callback_func));
+					SG(read_post_bytes) = 0;
+					SG(request_info).request_body = NULL;
+					SG(sapi_headers).http_response_code = 200;
+					SG(request_info).current_user = NULL;
+					SG(request_info).current_user_length = 0;
+					SG(request_info).no_headers = 0;
+					SG(request_info).post_entry = NULL;
+					SG(request_info).proto_num = 1000; /* Default to HTTP 1.0 */
+					SG(global_request_time) = 0;
+					SG(post_read) = 0;
+					/* It's possible to override this general case in the activate() callback, if necessary. */
+					if (SG(request_info).request_method && !strcmp(SG(request_info).request_method, "HEAD")) {
+						SG(request_info).headers_only = 1;
+					} else {
+						SG(request_info).headers_only = 0;
+					}
+					SG(rfc1867_uploaded_files) = NULL;
+
+					SG(request_info).cookie_data = sapi_module.read_cookies();
+
+					EG(error_handling) = EH_THROW;
+
+					{
+						int i;
+
+						for (i=0; i<NUM_TRACK_VARS; i++) {
+							zval_ptr_dtor(&PG(http_globals)[i]);
+						}
+					}
+
+					sapi_read_post_data();
+					php_hash_environment();
+					zend_is_auto_global_str(ZEND_STRL("_SERVER"));
+					zend_is_auto_global_str(ZEND_STRL("_REQUEST"));
+				} zend_catch {
+					SYSLOGE(" ERROR");
+					zend_bailout();
+				} zend_end_try();
+
+				SYSLOG("");
+
+				if (PG(expose_php)) {
+					sapi_add_header(SAPI_PHP_VERSION_HEADER, sizeof(SAPI_PHP_VERSION_HEADER)-1, 1);
+					sapi_add_header(pidstr, pidlen, 1);
+					sapi_add_header(ppidstr, ppidlen, 1);
+
+					memoryUsageLen = snprintf(memoryUsageStr, sizeof(memoryUsageStr), "Memory-Usage: %ld", zend_memory_usage(1));
+					memoryPeakUsageLen = snprintf(memoryPeakUsageStr, sizeof(memoryPeakUsageStr), "Memory-Peak-Usage: %ld", zend_memory_peak_usage(1));
+					sapi_add_header(memoryUsageStr, memoryUsageLen, 1);
+					sapi_add_header(memoryPeakUsageStr, memoryPeakUsageLen, 1);
+				}
+
+				SYSLOG("");
+
+				if (UNEXPECTED(fpm_status_handle_request())) {
+					SYSLOG(" STATUS");
+					goto fastcgi_request_done2;
+				}
+
+				SYSLOG("");
+
+				fpm_request_executing();
+
+				SYSLOG("");
+
+				zend_try {
+					zval fname, retval;
+
+					ZVAL_STRING(&fname, fpm_globals.php_entry_run);
+
+					if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
+						if(Z_TYPE(retval) == IS_STRING) {
+							SYSLOGE(" RETVAL(%lu): %s", Z_STRLEN(retval), Z_STRVAL(retval));
+						}
+						zval_ptr_dtor(&retval);
+					}
+
+					zval_ptr_dtor_str(&fname);
+				} zend_catch {
+					SYSLOGE(" CATCH %d", EG(exit_status));
+					if(Z_TYPE(EG(user_error_handler)) == IS_UNDEF && PG(display_errors) && PG(last_error_message)) {
+						switch(PG(last_error_type)) {
+							case E_ERROR:
+							case E_CORE_ERROR:
+							case E_COMPILE_ERROR:
+							case E_USER_ERROR:
+							case E_PARSE: {
+								char *error_buf = NULL;
+								size_t len;
+
+								len = spprintf(&error_buf, 0, "PHP Fatal error: %s in %s on line %d", PG(last_error_message), PG(last_error_file), PG(last_error_lineno));
+
+								SG(sapi_headers).http_response_code = 500;
+								php_header();
+								PHPWRITE_H(error_buf, len);
+								efree(error_buf);
+								break;
+							}
+						}
+
+						PG(last_error_type) = 0;
+						PG(last_error_lineno) = 0;
+
+						free(PG(last_error_message));
+						PG(last_error_message) = NULL;
+
+						if (PG(last_error_file)) {
+							free(PG(last_error_file));
+							PG(last_error_file) = NULL;
+						}
+					}
+				} zend_end_try();
+
+				SYSLOG("");
+
+	fastcgi_request_done2:
+				if (UNEXPECTED(request_body_fd != -1)) {
+					close(request_body_fd);
+				}
+				request_body_fd = -2;
+
+				SYSLOG("");
+
+				fpm_request_end();
+				fpm_log_write(NULL);
+
+				SYSLOG("");
+
+				zend_try {
+					if(PG(modules_activated)) {
+						php_call_shutdown_functions();
+						php_free_shutdown_functions();
+					}
+					if(fpm_globals.php_entry_clean) {
+						zend_try {
+							zval fname, retval;
+
+							ZVAL_STRING(&fname, fpm_globals.php_entry_clean);
+
+							EG(exit_status) = 0;
+
+							if(call_user_function(CG(function_table), NULL, &fname, &retval, 0, 0) == SUCCESS) {
+								if(Z_TYPE(retval) == IS_STRING) {
+									SYSLOGE(" RETVAL(%lu): %s", Z_STRLEN(retval), Z_STRVAL(retval));
+								}
+								zval_ptr_dtor(&retval);
+							}
+
+							zval_ptr_dtor_str(&fname);
+						} zend_catch {
+							SYSLOGE(" CATCH %d", EG(exit_status));
+						} zend_end_try();
+					}
+					SYSLOG("");
+					zend_unset_timeout();
+					SYSLOG("");
+					EG(exit_status) = 0;
+					SYSLOG("");
+					php_output_end_all();
+					SYSLOG("");
+					sapi_flush();
+					SYSLOG("");
+					php_header();
+					SYSLOG("");
+					fcgi_finish_request(request, 0);
+
+					SG(server_context) = NULL;
+
+					if(gc_enabled()) SYSLOGE(" GC: %d", gc_collect_cycles());
+
+					zend_llist_destroy(&SG(sapi_headers).headers);
+					if (SG(request_info).request_body) {
+						php_stream_close(SG(request_info).request_body);
+						SG(request_info).request_body = NULL;
+					}
+					if (SG(rfc1867_uploaded_files)) {
+						destroy_uploaded_files_hash();
+					}
+					if (SG(sapi_headers).mimetype) {
+						efree(SG(sapi_headers).mimetype);
+						SG(sapi_headers).mimetype = NULL;
+					}
+				} zend_catch {
+					SYSLOGE(" ERROR");
+					zend_bailout();
+				} zend_end_try();
+
+				SYSLOG("");
+
+				fpm_stdio_flush_child();
+
+				SYSLOG(" REQ END");
+
+				requests++;
+				if (UNEXPECTED(max_requests && (requests == max_requests))) {
+					fcgi_request_set_keep(request, 0);
+					fcgi_finish_request(request, 0);
+					break;
+				}
+				/* end of fastcgi loop */
 			}
 
-			fpm_request_end();
-			fpm_log_write(NULL);
-
-			efree(SG(request_info).path_translated);
-			SG(request_info).path_translated = NULL;
-
+			SYSLOG(" DESTROY");
+			fcgi_destroy_request(request);
+			SYSLOG(" SHUTDOWN");
+			fcgi_shutdown();
+			SYSLOG(" SHUTDOWN");
+			zend_llist_init(&SG(sapi_headers).headers, sizeof(sapi_header_struct), (void (*)(void *)) sapi_free_header, 0);
+			SYSLOG(" SHUTDOWN");
 			php_request_shutdown((void *) 0);
+			SYSLOG(" SHUTDOWN");
 
-			fpm_stdio_flush_child();
-
-			requests++;
-			if (UNEXPECTED(max_requests && (requests == max_requests))) {
-				fcgi_request_set_keep(request, 0);
-				fcgi_finish_request(request, 0);
-				break;
+			if (cgi_sapi_module.php_ini_path_override) {
+				free(cgi_sapi_module.php_ini_path_override);
 			}
-			/* end of fastcgi loop */
-		}
-		fcgi_destroy_request(request);
-		fcgi_shutdown();
+			if (cgi_sapi_module.ini_entries) {
+				free(cgi_sapi_module.ini_entries);
+			}
+			SYSLOG(" SHUTDOWN");
+		} zend_catch {
+			exit_status = FPM_EXIT_SOFTWARE;
+			SYSLOGE(" ERROR");
+		} zend_end_try();
 
-		if (cgi_sapi_module.php_ini_path_override) {
-			free(cgi_sapi_module.php_ini_path_override);
-		}
-		if (cgi_sapi_module.ini_entries) {
-			free(cgi_sapi_module.ini_entries);
-		}
-	} zend_catch {
-		exit_status = FPM_EXIT_SOFTWARE;
-	} zend_end_try();
+		CLOSELOG();
+	} else {
+		OPENLOG();
+		zend_first_try {
+			while (EXPECTED(fcgi_accept_request(request) >= 0)) {
+				char *primary_script = NULL;
+				request_body_fd = -1;
+				SG(server_context) = (void *) request;
+				init_request_info();
+
+				fpm_request_info();
+
+				/* request startup only after we've done all we can to
+				 *            get path_translated */
+				if (UNEXPECTED(php_request_startup() == FAILURE)) {
+					fcgi_finish_request(request, 1);
+					SG(server_context) = NULL;
+					php_module_shutdown();
+					return FPM_EXIT_SOFTWARE;
+				}
+
+				/* check if request_method has been sent.
+				 * if not, it's certainly not an HTTP over fcgi request */
+				if (UNEXPECTED(!SG(request_info).request_method)) {
+					goto fastcgi_request_done;
+				}
+
+				if (UNEXPECTED(fpm_status_handle_request())) {
+					goto fastcgi_request_done;
+				}
+
+				/* If path_translated is NULL, terminate here with a 404 */
+				if (UNEXPECTED(!SG(request_info).path_translated)) {
+					zend_try {
+						zlog(ZLOG_DEBUG, "Primary script unknown");
+						SG(sapi_headers).http_response_code = 404;
+						PUTS("File not found.\n");
+					} zend_catch {
+					} zend_end_try();
+					goto fastcgi_request_done;
+				}
+
+				if (UNEXPECTED(fpm_php_limit_extensions(SG(request_info).path_translated))) {
+					SG(sapi_headers).http_response_code = 403;
+					PUTS("Access denied.\n");
+					goto fastcgi_request_done;
+				}
+
+				{
+					char path[PATH_MAX];
+					if(realpath(SG(request_info).path_translated, path)) {
+						primary_script = estrdup(path);
+					} else {
+						primary_script = estrdup(SG(request_info).path_translated);
+					}
+				}
+
+				SYSLOG(" SCRIPT: %s", primary_script);
+
+				fpm_request_executing();
+
+				zend_stream_init_filename(&file_handle, primary_script);
+				php_execute_script(&file_handle);
+
+	fastcgi_request_done:
+				if (EXPECTED(primary_script)) {
+					efree(primary_script);
+				}
+
+				if (UNEXPECTED(request_body_fd != -1)) {
+					close(request_body_fd);
+				}
+				request_body_fd = -2;
+
+				if (UNEXPECTED(EG(exit_status) == 255)) {
+					if (CGIG(error_header) && *CGIG(error_header)) {
+						sapi_header_line ctr = {0};
+
+						ctr.line = CGIG(error_header);
+						ctr.line_len = strlen(CGIG(error_header));
+						sapi_header_op(SAPI_HEADER_REPLACE, &ctr);
+					}
+				}
+
+				fpm_request_end();
+				fpm_log_write(NULL);
+
+				efree(SG(request_info).path_translated);
+				SG(request_info).path_translated = NULL;
+
+				php_request_shutdown((void *) 0);
+
+				fpm_stdio_flush_child();
+
+				requests++;
+				if (UNEXPECTED(max_requests && (requests == max_requests))) {
+					fcgi_request_set_keep(request, 0);
+					fcgi_finish_request(request, 0);
+					break;
+				}
+				/* end of fastcgi loop */
+			}
+			fcgi_destroy_request(request);
+			fcgi_shutdown();
+
+			if (cgi_sapi_module.php_ini_path_override) {
+				free(cgi_sapi_module.php_ini_path_override);
+			}
+			if (cgi_sapi_module.ini_entries) {
+				free(cgi_sapi_module.ini_entries);
+			}
+		} zend_catch {
+			exit_status = FPM_EXIT_SOFTWARE;
+		} zend_end_try();
+		CLOSELOG();
+	}
 
 out:
 
