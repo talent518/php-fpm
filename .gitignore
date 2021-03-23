@@ -1,3 +1,4 @@
+*.o
 *.lo
 fpm/.libs
 init.d.php-fpm
