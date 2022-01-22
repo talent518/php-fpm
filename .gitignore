@@ -9,3 +9,4 @@ status.html
 www.conf
 php-fpm
 fpm/events/.libs/
+*.dep
