@@ -14,14 +14,14 @@
 ; Pid file
 ; Note: the default prefix is @EXPANDED_LOCALSTATEDIR@
 ; Default Value: none
-;pid = run/php-fpm.pid
+;pid = run/php-fpm2.pid
 
 ; Error log file
 ; If it's set to "syslog", log is sent to syslogd instead of being written
 ; into a local file.
 ; Note: the default prefix is @EXPANDED_LOCALSTATEDIR@
-; Default Value: log/php-fpm.log
-;error_log = log/php-fpm.log
+; Default Value: log/php-fpm2.log
+;error_log = log/php-fpm2.log
 
 ; syslog_facility is used to specify what type of program is logging the
 ; message. This lets syslogd specify that messages from different facilities
@@ -33,8 +33,8 @@
 ; syslog_ident is prepended to every message. If you have multiple FPM
 ; instances running on the same server, you can change the default value
 ; which must suit common needs.
-; Default Value: php-fpm
-;syslog.ident = php-fpm
+; Default Value: php-fpm2
+;syslog.ident = php-fpm2
 
 ; Log level
 ; Possible Values: alert, error, warning, notice, debug
@@ -140,4 +140,4 @@
 ; Relative path can also be used. They will be prefixed by:
 ;  - the global prefix if it's been set (-p argument)
 ;  - @prefix@ otherwise
-include=@php_fpm_sysconfdir@/php-fpm.d/*.conf
+include=@php_fpm2_sysconfdir@/php-fpm2.d/*.conf

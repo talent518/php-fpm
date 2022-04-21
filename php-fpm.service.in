@@ -7,9 +7,9 @@ Description=The PHP FastCGI Process Manager
 After=network.target
 
 [Service]
-Type=@php_fpm_systemd@
-PIDFile=@EXPANDED_LOCALSTATEDIR@/run/php-fpm.pid
-ExecStart=@EXPANDED_SBINDIR@/php-fpm --nodaemonize --fpm-config @EXPANDED_SYSCONFDIR@/php-fpm.conf
+Type=@php_fpm2_systemd@
+PIDFile=@EXPANDED_LOCALSTATEDIR@/run/php-fpm2.pid
+ExecStart=@EXPANDED_SBINDIR@/php-fpm2 --nodaemonize --fpm-config @EXPANDED_SYSCONFDIR@/php-fpm2.conf
 ExecReload=/bin/kill -USR2 $MAINPID
 
 # Set up a new file system namespace and mounts private /tmp and /var/tmp directories
