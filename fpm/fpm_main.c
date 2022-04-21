@@ -2261,7 +2261,7 @@ consult the installation file that came with this distribution, or visit \n\
 				SYSLOG("");
 
 				if (PG(expose_php)) {
-					sapi_add_header(SAPI_PHP_VERSION_HEADER, sizeof(SAPI_PHP_VERSION_HEADER)-1, 1);
+					sapi_add_header(SAPI_PHP_VERSION_HEADER "/fpm2", sizeof(SAPI_PHP_VERSION_HEADER "/fpm2")-1, 1);
 					sapi_add_header(pidstr, pidlen, 1);
 					sapi_add_header(ppidstr, ppidlen, 1);
 
