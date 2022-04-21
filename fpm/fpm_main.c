@@ -249,13 +249,13 @@ static void print_extensions(void) /* {{{ */
 #endif
 
 #ifdef FPM_ENTRY_DEBUG
-#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOG(" OPEN")
+#	define OPENLOG() openlog("php-fpm2", LOG_PID, LOG_USER);SYSLOG(" OPEN")
 #	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
 #	define SYSLOGE SYSLOG
 #	define SYSLOGG(fmt, args...) if(fpm_globals.php_entry_file && fpm_globals.php_entry_run){SYSLOG(fmt, ##args);}
 #	define CLOSELOG() SYSLOG(" CLOSE");closelog()
 #else
-#	define OPENLOG() openlog("php-fpm", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
+#	define OPENLOG() openlog("php-fpm2", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
 #	define SYSLOG(fmt, args...)
 #	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s" fmt, __FILE__, __LINE__, __func__, ##args)
 #	define SYSLOGG(...)
@@ -1529,7 +1529,7 @@ static PHP_MSHUTDOWN_FUNCTION(cgi)
 static PHP_MINFO_FUNCTION(cgi)
 {
 	php_info_print_table_start();
-	php_info_print_table_row(2, "php-fpm", "active");
+	php_info_print_table_row(2, "php-fpm2", "active");
 	php_info_print_table_end();
 
 	DISPLAY_INI_ENTRIES();

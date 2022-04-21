@@ -1,20 +1,20 @@
-PHP_ARG_ENABLE([fpm],,
-  [AS_HELP_STRING([--enable-fpm],
-    [Enable building of the fpm SAPI executable])],
+PHP_ARG_ENABLE([fpm2],,
+  [AS_HELP_STRING([--enable-fpm2],
+    [Enable building of the fpm2 SAPI executable])],
   [no],
   [no])
 
-PHP_ARG_ENABLE([fpm-entry-debug],,
-  [AS_HELP_STRING([--enable-fpm-entry-debug],
-    [Enable fpm entry debug info for syslog])],
+PHP_ARG_ENABLE([fpm2-entry-debug],,
+  [AS_HELP_STRING([--enable-fpm2-entry-debug],
+    [Enable fpm2 entry debug info for syslog])],
   [no])
 
-if test "$PHP_FPM_ENTRY_DEBUG" != "no"; then
-  CFLAGS="$CFLAGS -DFPM_ENTRY_DEBUG"
+if test "$PHP_fpm2_ENTRY_DEBUG" != "no"; then
+  CFLAGS="$CFLAGS -Dfpm2_ENTRY_DEBUG"
 fi
 
 dnl Configure checks.
-AC_DEFUN([AC_FPM_STDLIBS],
+AC_DEFUN([AC_fpm2_STDLIBS],
 [
   AC_CHECK_FUNCS(clearenv setproctitle setproctitle_fast)
 
@@ -22,7 +22,7 @@ AC_DEFUN([AC_FPM_STDLIBS],
   AC_SEARCH_LIBS(inet_addr, nsl)
 ])
 
-AC_DEFUN([AC_FPM_PRCTL],
+AC_DEFUN([AC_fpm2_PRCTL],
 [
   AC_MSG_CHECKING([for prctl])
 
@@ -34,7 +34,7 @@ AC_DEFUN([AC_FPM_PRCTL],
   ])
 ])
 
-AC_DEFUN([AC_FPM_CLOCK],
+AC_DEFUN([AC_fpm2_CLOCK],
 [
   have_clock_gettime=no
 
@@ -104,7 +104,7 @@ AC_DEFUN([AC_FPM_CLOCK],
   fi
 ])
 
-AC_DEFUN([AC_FPM_TRACE],
+AC_DEFUN([AC_fpm2_TRACE],
 [
   have_ptrace=no
   have_broken_ptrace=no
@@ -279,24 +279,24 @@ AC_DEFUN([AC_FPM_TRACE],
     AC_DEFINE_UNQUOTED([PROC_MEM_FILE], "$proc_mem_file", [/proc/pid/mem interface])
   fi
 
-  fpm_trace_type=""
+  fpm2_trace_type=""
 
   if test "$have_ptrace" = "yes"; then
-    fpm_trace_type=ptrace
+    fpm2_trace_type=ptrace
 
   elif test -n "$proc_mem_file"; then
-    fpm_trace_type=pread
+    fpm2_trace_type=pread
 
   elif test "$have_mach_vm_read" = "yes" ; then
-    fpm_trace_type=mach
+    fpm2_trace_type=mach
 
   else
-    AC_MSG_WARN([FPM Trace - ptrace, pread, or mach: could not be found])
+    AC_MSG_WARN([fpm2 Trace - ptrace, pread, or mach: could not be found])
   fi
 
 ])
 
-AC_DEFUN([AC_FPM_BUILTIN_ATOMIC],
+AC_DEFUN([AC_fpm2_BUILTIN_ATOMIC],
 [
   AC_MSG_CHECKING([if gcc supports __sync_bool_compare_and_swap])
   AC_LINK_IFELSE([AC_LANG_PROGRAM([], [[
@@ -311,7 +311,7 @@ AC_DEFUN([AC_FPM_BUILTIN_ATOMIC],
   ])
 ])
 
-AC_DEFUN([AC_FPM_LQ],
+AC_DEFUN([AC_fpm2_LQ],
 [
   have_lq=no
 
@@ -344,7 +344,7 @@ AC_DEFUN([AC_FPM_LQ],
   fi
 ])
 
-AC_DEFUN([AC_FPM_SYSCONF],
+AC_DEFUN([AC_fpm2_SYSCONF],
 [
 	AC_MSG_CHECKING([for sysconf])
 
@@ -356,7 +356,7 @@ AC_DEFUN([AC_FPM_SYSCONF],
 	])
 ])
 
-AC_DEFUN([AC_FPM_TIMES],
+AC_DEFUN([AC_fpm2_TIMES],
 [
 	AC_MSG_CHECKING([for times])
 
@@ -368,7 +368,7 @@ AC_DEFUN([AC_FPM_TIMES],
 	])
 ])
 
-AC_DEFUN([AC_FPM_KQUEUE],
+AC_DEFUN([AC_fpm2_KQUEUE],
 [
 	AC_MSG_CHECKING([for kqueue])
 
@@ -390,7 +390,7 @@ AC_DEFUN([AC_FPM_KQUEUE],
 	])
 ])
 
-AC_DEFUN([AC_FPM_PORT],
+AC_DEFUN([AC_fpm2_PORT],
 [
 	AC_MSG_CHECKING([for port framework])
 
@@ -411,7 +411,7 @@ AC_DEFUN([AC_FPM_PORT],
 	])
 ])
 
-AC_DEFUN([AC_FPM_DEVPOLL],
+AC_DEFUN([AC_fpm2_DEVPOLL],
 [
 	AC_MSG_CHECKING([for /dev/poll])
 
@@ -434,7 +434,7 @@ AC_DEFUN([AC_FPM_DEVPOLL],
 	])
 ])
 
-AC_DEFUN([AC_FPM_EPOLL],
+AC_DEFUN([AC_fpm2_EPOLL],
 [
 	AC_MSG_CHECKING([for epoll])
 
@@ -468,7 +468,7 @@ AC_DEFUN([AC_FPM_EPOLL],
 	])
 ])
 
-AC_DEFUN([AC_FPM_SELECT],
+AC_DEFUN([AC_fpm2_SELECT],
 [
 	AC_MSG_CHECKING([for select])
 
@@ -497,7 +497,7 @@ AC_DEFUN([AC_FPM_SELECT],
 	])
 ])
 
-AC_DEFUN([AC_FPM_APPARMOR],
+AC_DEFUN([AC_fpm2_APPARMOR],
 [
 	AC_MSG_CHECKING([for apparmor])
 
@@ -513,130 +513,130 @@ AC_DEFUN([AC_FPM_APPARMOR],
 	])
 ])
 
-AC_MSG_CHECKING(for FPM build)
-if test "$PHP_FPM" != "no"; then
-  AC_MSG_RESULT($PHP_FPM)
+AC_MSG_CHECKING(for fpm2 build)
+if test "$PHP_fpm2" != "no"; then
+  AC_MSG_RESULT($PHP_fpm2)
 
-  AC_FPM_STDLIBS
-  AC_FPM_PRCTL
-  AC_FPM_CLOCK
-  AC_FPM_TRACE
-  AC_FPM_BUILTIN_ATOMIC
-  AC_FPM_LQ
-  AC_FPM_SYSCONF
-  AC_FPM_TIMES
-  AC_FPM_KQUEUE
-  AC_FPM_PORT
-  AC_FPM_DEVPOLL
-  AC_FPM_EPOLL
-  AC_FPM_SELECT
-  AC_FPM_APPARMOR
+  AC_fpm2_STDLIBS
+  AC_fpm2_PRCTL
+  AC_fpm2_CLOCK
+  AC_fpm2_TRACE
+  AC_fpm2_BUILTIN_ATOMIC
+  AC_fpm2_LQ
+  AC_fpm2_SYSCONF
+  AC_fpm2_TIMES
+  AC_fpm2_KQUEUE
+  AC_fpm2_PORT
+  AC_fpm2_DEVPOLL
+  AC_fpm2_EPOLL
+  AC_fpm2_SELECT
+  AC_fpm2_APPARMOR
 
-  PHP_ARG_WITH([fpm-user],,
-    [AS_HELP_STRING([[--with-fpm-user[=USER]]],
-      [Set the user for php-fpm to run as. (default: nobody)])],
+  PHP_ARG_WITH([fpm2-user],,
+    [AS_HELP_STRING([[--with-fpm2-user[=USER]]],
+      [Set the user for php-fpm2 to run as. (default: nobody)])],
     [nobody],
     [no])
 
-  PHP_ARG_WITH([fpm-group],,
-    [AS_HELP_STRING([[--with-fpm-group[=GRP]]],
-      [Set the group for php-fpm to run as. For a system user, this should
-      usually be set to match the fpm username (default: nobody)])],
+  PHP_ARG_WITH([fpm2-group],,
+    [AS_HELP_STRING([[--with-fpm2-group[=GRP]]],
+      [Set the group for php-fpm2 to run as. For a system user, this should
+      usually be set to match the fpm2 username (default: nobody)])],
     [nobody],
     [no])
 
-  PHP_ARG_WITH([fpm-systemd],,
-    [AS_HELP_STRING([--with-fpm-systemd],
+  PHP_ARG_WITH([fpm2-systemd],,
+    [AS_HELP_STRING([--with-fpm2-systemd],
       [Activate systemd integration])],
     [no],
     [no])
 
-  PHP_ARG_WITH([fpm-acl],,
-    [AS_HELP_STRING([--with-fpm-acl],
+  PHP_ARG_WITH([fpm2-acl],,
+    [AS_HELP_STRING([--with-fpm2-acl],
       [Use POSIX Access Control Lists])],
     [no],
     [no])
 
-  if test "$PHP_FPM_SYSTEMD" != "no" ; then
+  if test "$PHP_fpm2_SYSTEMD" != "no" ; then
     PKG_CHECK_MODULES([SYSTEMD], [libsystemd >= 209])
 
     AC_CHECK_HEADERS(systemd/sd-daemon.h, [HAVE_SD_DAEMON_H="yes"], [HAVE_SD_DAEMON_H="no"])
     if test $HAVE_SD_DAEMON_H = "no"; then
       AC_MSG_ERROR([Your system does not support systemd.])
     else
-      AC_DEFINE(HAVE_SYSTEMD, 1, [FPM use systemd integration])
-      PHP_FPM_SD_FILES="fpm/fpm_systemd.c"
+      AC_DEFINE(HAVE_SYSTEMD, 1, [fpm2 use systemd integration])
+      PHP_FPM2_SD_FILES="fpm/fpm_systemd.c"
       PHP_EVAL_LIBLINE($SYSTEMD_LIBS)
       PHP_EVAL_INCLINE($SYSTEMD_CFLAGS)
-      php_fpm_systemd=notify
+      php_fpm2_systemd=notify
     fi
   else
-    php_fpm_systemd=simple
+    php_fpm2_systemd=simple
   fi
 
-  if test "$PHP_FPM_ACL" != "no" ; then
+  if test "$PHP_fpm2_ACL" != "no" ; then
     AC_CHECK_HEADERS([sys/acl.h])
     dnl *BSD has acl_* built into libc.
     AC_CHECK_FUNC(acl_free, [
-      AC_DEFINE(HAVE_FPM_ACL, 1, [ POSIX Access Control List ])
+      AC_DEFINE(HAVE_fpm2_ACL, 1, [ POSIX Access Control List ])
     ],[
       AC_CHECK_LIB(acl, acl_free, [
         PHP_ADD_LIBRARY(acl)
-        AC_DEFINE(HAVE_FPM_ACL, 1, [ POSIX Access Control List ])
+        AC_DEFINE(HAVE_fpm2_ACL, 1, [ POSIX Access Control List ])
       ],[
         AC_MSG_ERROR(libacl required not found)
       ])
     ])
   fi
 
-  PHP_SUBST_OLD(php_fpm_systemd)
-  AC_DEFINE_UNQUOTED(PHP_FPM_SYSTEMD, "$php_fpm_systemd", [fpm systemd service type])
+  PHP_SUBST_OLD(php_fpm2_systemd)
+  AC_DEFINE_UNQUOTED(PHP_fpm2_SYSTEMD, "$php_fpm2_systemd", [fpm2 systemd service type])
 
-  if test -z "$PHP_FPM_USER" -o "$PHP_FPM_USER" = "yes" -o "$PHP_FPM_USER" = "no"; then
-    php_fpm_user="nobody"
+  if test -z "$PHP_FPM2_USER" -o "$PHP_FPM2_USER" = "yes" -o "$PHP_FPM2_USER" = "no"; then
+    php_fpm2_user="nobody"
   else
-    php_fpm_user="$PHP_FPM_USER"
+    php_fpm2_user="$PHP_FPM2_USER"
   fi
 
-  if test -z "$PHP_FPM_GROUP" -o "$PHP_FPM_GROUP" = "yes" -o "$PHP_FPM_GROUP" = "no"; then
-    php_fpm_group="nobody"
+  if test -z "$PHP_FPM2_GROUP" -o "$PHP_FPM2_GROUP" = "yes" -o "$PHP_FPM2_GROUP" = "no"; then
+    php_fpm2_group="nobody"
   else
-    php_fpm_group="$PHP_FPM_GROUP"
+    php_fpm2_group="$PHP_FPM2_GROUP"
   fi
 
-  PHP_SUBST_OLD(php_fpm_user)
-  PHP_SUBST_OLD(php_fpm_group)
-  php_fpm_sysconfdir=`eval echo $sysconfdir`
-  PHP_SUBST_OLD(php_fpm_sysconfdir)
-  php_fpm_localstatedir=`eval echo $localstatedir`
-  PHP_SUBST_OLD(php_fpm_localstatedir)
-  php_fpm_prefix=`eval echo $prefix`
-  PHP_SUBST_OLD(php_fpm_prefix)
+  PHP_SUBST_OLD(php_fpm2_user)
+  PHP_SUBST_OLD(php_fpm2_group)
+  php_fpm2_sysconfdir=`eval echo $sysconfdir`
+  PHP_SUBST_OLD(php_fpm2_sysconfdir)
+  php_fpm2_localstatedir=`eval echo $localstatedir`
+  PHP_SUBST_OLD(php_fpm2_localstatedir)
+  php_fpm2_prefix=`eval echo $prefix`
+  PHP_SUBST_OLD(php_fpm2_prefix)
 
-  AC_DEFINE_UNQUOTED(PHP_FPM_USER, "$php_fpm_user", [fpm user name])
-  AC_DEFINE_UNQUOTED(PHP_FPM_GROUP, "$php_fpm_group", [fpm group name])
+  AC_DEFINE_UNQUOTED(PHP_FPM2_USER, "$php_fpm2_user", [fpm2 user name])
+  AC_DEFINE_UNQUOTED(PHP_FPM2_GROUP, "$php_fpm2_group", [fpm2 group name])
 
-  PHP_ADD_BUILD_DIR(sapi/fpm/fpm)
-  PHP_ADD_BUILD_DIR(sapi/fpm/fpm/events)
-  PHP_OUTPUT(sapi/fpm/php-fpm.conf sapi/fpm/www.conf sapi/fpm/init.d.php-fpm sapi/fpm/php-fpm.service sapi/fpm/php-fpm.8 sapi/fpm/status.html)
-  PHP_ADD_MAKEFILE_FRAGMENT([$abs_srcdir/sapi/fpm/Makefile.frag])
+  PHP_ADD_BUILD_DIR(sapi/fpm2/fpm)
+  PHP_ADD_BUILD_DIR(sapi/fpm2/fpm/events)
+  PHP_OUTPUT(sapi/fpm2/php-fpm.conf sapi/fpm2/www.conf sapi/fpm2/init.d.php-fpm sapi/fpm2/php-fpm.service sapi/fpm2/php-fpm.8 sapi/fpm2/status.html)
+  PHP_ADD_MAKEFILE_FRAGMENT([$abs_srcdir/sapi/fpm2/Makefile.frag])
 
-  SAPI_FPM_PATH=sapi/fpm/php-fpm
+  SAPI_FPM2_PATH=sapi/fpm2/php-fpm
 
-  if test "$fpm_trace_type" && test -f "$abs_srcdir/sapi/fpm/fpm/fpm_trace_$fpm_trace_type.c"; then
-    PHP_FPM_TRACE_FILES="fpm/fpm_trace.c fpm/fpm_trace_$fpm_trace_type.c"
+  if test "$fpm2_trace_type" && test -f "$abs_srcdir/sapi/fpm2/fpm/fpm_trace_$fpm2_trace_type.c"; then
+    PHP_FPM2_TRACE_FILES="fpm/fpm_trace.c fpm/fpm_trace_$fpm2_trace_type.c"
   fi
 
-  PHP_FPM_CFLAGS="-I$abs_srcdir/sapi/fpm -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1"
+  PHP_FPM2_CFLAGS="-I$abs_srcdir/sapi/fpm2 -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1"
 
-  PHP_FPM_FILES="fpm/fpm.c \
+  PHP_FPM2_FILES="fpm/fpm.c \
     fpm/fpm_children.c \
     fpm/fpm_cleanup.c \
     fpm/fpm_clock.c \
     fpm/fpm_conf.c \
     fpm/fpm_env.c \
     fpm/fpm_events.c \
-		fpm/fpm_log.c \
+    fpm/fpm_log.c \
     fpm/fpm_main.c \
     fpm/fpm_php.c \
     fpm/fpm_php_trace.c \
@@ -651,30 +651,30 @@ if test "$PHP_FPM" != "no"; then
     fpm/fpm_unix.c \
     fpm/fpm_worker_pool.c \
     fpm/zlog.c \
-		fpm/events/select.c \
-		fpm/events/poll.c \
-		fpm/events/epoll.c \
-		fpm/events/kqueue.c \
-		fpm/events/devpoll.c \
-		fpm/events/port.c \
+    fpm/events/select.c \
+    fpm/events/poll.c \
+    fpm/events/epoll.c \
+    fpm/events/kqueue.c \
+    fpm/events/devpoll.c \
+    fpm/events/port.c \
   "
 
-  PHP_SELECT_SAPI(fpm, program, $PHP_FPM_FILES $PHP_FPM_TRACE_FILES $PHP_FPM_SD_FILES, $PHP_FPM_CFLAGS, '$(SAPI_FPM_PATH)')
+  PHP_SELECT_SAPI(fpm2, program, $PHP_FPM2_FILES $PHP_FPM2_TRACE_FILES $PHP_FPM2_SD_FILES, $PHP_FPM2_CFLAGS, '$(SAPI_FPM2_PATH)')
 
   case $host_alias in
       *aix*)
-        BUILD_FPM="echo '\#! .' > php.sym && echo >>php.sym && nm -BCpg \`echo \$(PHP_GLOBAL_OBJS) \$(PHP_BINARY_OBJS) \$(PHP_FPM_OBJS) | sed 's/\([A-Za-z0-9_]*\)\.lo/\1.o/g'\` | \$(AWK) '{ if (((\$\$2 == \"T\") || (\$\$2 == \"D\") || (\$\$2 == \"B\")) && (substr(\$\$3,1,1) != \".\")) { print \$\$3 } }' | sort -u >> php.sym && \$(LIBTOOL) --mode=link \$(CC) -export-dynamic \$(CFLAGS_CLEAN) \$(EXTRA_CFLAGS) \$(EXTRA_LDFLAGS_PROGRAM) \$(LDFLAGS) -Wl,-brtl -Wl,-bE:php.sym \$(PHP_RPATHS) \$(PHP_GLOBAL_OBJS) \$(PHP_BINARY_OBJS) \$(PHP_FASTCGI_OBJS) \$(PHP_FPM_OBJS) \$(EXTRA_LIBS) \$(FPM_EXTRA_LIBS) \$(ZEND_EXTRA_LIBS) -o \$(SAPI_FPM_PATH)"
+        BUILD_FPM2="echo '\#! .' > php.sym && echo >>php.sym && nm -BCpg \`echo \$(PHP_GLOBAL_OBJS) \$(PHP_BINARY_OBJS) \$(PHP_FPM2_OBJS) | sed 's/\([A-Za-z0-9_]*\)\.lo/\1.o/g'\` | \$(AWK) '{ if (((\$\$2 == \"T\") || (\$\$2 == \"D\") || (\$\$2 == \"B\")) && (substr(\$\$3,1,1) != \".\")) { print \$\$3 } }' | sort -u >> php.sym && \$(LIBTOOL) --mode=link \$(CC) -export-dynamic \$(CFLAGS_CLEAN) \$(EXTRA_CFLAGS) \$(EXTRA_LDFLAGS_PROGRAM) \$(LDFLAGS) -Wl,-brtl -Wl,-bE:php.sym \$(PHP_RPATHS) \$(PHP_GLOBAL_OBJS) \$(PHP_BINARY_OBJS) \$(PHP_FASTCGI_OBJS) \$(PHP_FPM2_OBJS) \$(EXTRA_LIBS) \$(fpm2_EXTRA_LIBS) \$(ZEND_EXTRA_LIBS) -o \$(SAPI_FPM2_PATH)"
         ;;
       *darwin*)
-        BUILD_FPM="\$(CC) \$(CFLAGS_CLEAN) \$(EXTRA_CFLAGS) \$(EXTRA_LDFLAGS_PROGRAM) \$(LDFLAGS) \$(NATIVE_RPATHS) \$(PHP_GLOBAL_OBJS:.lo=.o) \$(PHP_BINARY_OBJS:.lo=.o) \$(PHP_FASTCGI_OBJS:.lo=.o) \$(PHP_FPM_OBJS:.lo=.o) \$(PHP_FRAMEWORKS) \$(EXTRA_LIBS) \$(FPM_EXTRA_LIBS) \$(ZEND_EXTRA_LIBS) -o \$(SAPI_FPM_PATH)"
+        BUILD_FPM2="\$(CC) \$(CFLAGS_CLEAN) \$(EXTRA_CFLAGS) \$(EXTRA_LDFLAGS_PROGRAM) \$(LDFLAGS) \$(NATIVE_RPATHS) \$(PHP_GLOBAL_OBJS:.lo=.o) \$(PHP_BINARY_OBJS:.lo=.o) \$(PHP_FASTCGI_OBJS:.lo=.o) \$(PHP_FPM2_OBJS:.lo=.o) \$(PHP_FRAMEWORKS) \$(EXTRA_LIBS) \$(fpm2_EXTRA_LIBS) \$(ZEND_EXTRA_LIBS) -o \$(SAPI_FPM2_PATH)"
       ;;
       *)
-        BUILD_FPM="\$(LIBTOOL) --mode=link \$(CC) -export-dynamic \$(CFLAGS_CLEAN) \$(EXTRA_CFLAGS) \$(EXTRA_LDFLAGS_PROGRAM) \$(LDFLAGS) \$(PHP_RPATHS) \$(PHP_GLOBAL_OBJS) \$(PHP_BINARY_OBJS) \$(PHP_FASTCGI_OBJS) \$(PHP_FPM_OBJS) \$(EXTRA_LIBS) \$(FPM_EXTRA_LIBS) \$(ZEND_EXTRA_LIBS) -o \$(SAPI_FPM_PATH)"
+        BUILD_FPM2="\$(LIBTOOL) --mode=link \$(CC) -export-dynamic \$(CFLAGS_CLEAN) \$(EXTRA_CFLAGS) \$(EXTRA_LDFLAGS_PROGRAM) \$(LDFLAGS) \$(PHP_RPATHS) \$(PHP_GLOBAL_OBJS) \$(PHP_BINARY_OBJS) \$(PHP_FASTCGI_OBJS) \$(PHP_FPM2_OBJS) \$(EXTRA_LIBS) \$(fpm2_EXTRA_LIBS) \$(ZEND_EXTRA_LIBS) -o \$(SAPI_FPM2_PATH)"
       ;;
   esac
 
-  PHP_SUBST(SAPI_FPM_PATH)
-  PHP_SUBST(BUILD_FPM)
+  PHP_SUBST(SAPI_FPM2_PATH)
+  PHP_SUBST(BUILD_FPM2)
 
 else
   AC_MSG_RESULT(no)
