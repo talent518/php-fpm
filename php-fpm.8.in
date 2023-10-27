@@ -1,7 +1,7 @@
-.TH PHP-FPM 8 "2021" "The PHP Group" "Scripting Language"
+.TH PHP-FPM2 8 "2023" "The PHP Group" "Scripting Language"
 .SH NAME
 .TP 15
-php-fpm2 \- PHP FastCGI Process Manager 'PHP-FPM'
+php-fpm2 \- PHP FastCGI Process Manager 'PHP-FPM2'
 .SH SYNOPSIS
 .B php-fpm2
 [options]
@@ -77,6 +77,8 @@ Show compiled in modules
 .PD 1
 .B \-v
 Version number
+.TP
+.PD 0
 .B \-\-prefix \fIpath\fP
 .TP
 .PD 1
@@ -176,7 +178,7 @@ The PHP-FPM CGI daemon will work well with most popular webservers, including Ap
 The PHP-FPM website:
 .PD 0
 .P
-.B http://php-fpm2.org
+.B http://php-fpm.org
 .PD 1
 .P
 For a more or less complete description of PHP look here:
@@ -195,7 +197,7 @@ You can view the list of known bugs or report any new bug you
 found at:
 .PD 0
 .P
-.B http://bugs.php.net
+.B https://github.com/php/php-src/issues
 .PD 1
 .SH AUTHORS
 PHP-FPM SAPI was written by Andrei Nigmatulin. The mailing-lists are highload-php-en (English) and highload-php-ru (Russian).
